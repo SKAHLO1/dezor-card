@@ -1,0 +1,22 @@
+# dependencies
+**/node_modules
+
+# env
+**/.env
+**/.env.local
+
+# next
+frontend/.next
+frontend/out
+frontend/next-env.d.ts
+**/*.tsbuildinfo
+
+# hardhat
+contracts/artifacts
+contracts/cache
+contracts/typechain-types
+
+# backend
+backend/dist
+
+.DS_Store

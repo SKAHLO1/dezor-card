@@ -1,0 +1,17 @@
+{
+  "name": "satlock-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "deploy": "hardhat run scripts/deploy.ts --network matsnet",
+    "test": "hardhat test"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-network-helpers": "^1.0.12",
+    "@nomicfoundation/hardhat-toolbox-viem": "^3.0.0",
+    "chai": "^4.5.0",
+    "hardhat": "^2.22.0",
+    "typescript": "5.7.3"
+  }
+}
