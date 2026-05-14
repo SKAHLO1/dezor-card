@@ -1,4 +1,4 @@
-# SatLock
+# TrustieWork
 
 **A Developer-services marketplace, on-chain — escrow protected on Bitcoin via Mezo.**
 
@@ -12,13 +12,13 @@ unilaterally, and no settlement is reversible once final.
 Funding works two ways:
 
 - **MUSD** — the buyer deposits the stablecoin directly.
-- **BTC collateral** — the buyer locks native BTC; SatLock mints MUSD against it through Mezo's
+- **BTC collateral** — the buyer locks native BTC; TrustieWork mints MUSD against it through Mezo's
   trove system (`BorrowerOperations.openTrove`). The Bitcoin keeps working as collateral while
   it secures the job.
 
 ## How this hits each track
 
-- **Bank on Bitcoin — Bitcoin Track:** escrow is a core financial primitive. SatLock lets a
+- **Bank on Bitcoin — Bitcoin Track:** escrow is a core financial primitive. TrustieWork lets a
   buyer's BTC keep working as trove collateral while it secures real freelance work.
 - **MEZO Utilization — MEZO Track:** MUSD is the settlement currency end-to-end, with direct
   integration into Mezo's `BorrowerOperations` trove system for BTC-collateralized funding.
@@ -49,7 +49,7 @@ can finalize it, otherwise the admin (contract `owner`) makes the final, binding
 ## Repo layout
 
 ```
-satlock/
+TrustieWork/
 ├── contracts/   Solidity + Hardhat — SatLockEscrow marketplace contract, tests, Matsnet deploy
 ├── backend/     Express service — Google Gemini AI layers, GitHub scanner, Firebase + Firestore
 └── frontend/    Next.js 16 app — Firebase auth, wagmi + RainbowKit, wired to Mezo Matsnet
