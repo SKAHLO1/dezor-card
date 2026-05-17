@@ -3,10 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { useAccount } from 'wagmi';
 import { useAuth } from '@/components/AuthProvider';
 import { Avatar } from '@/components/ui';
-import { env } from '@/lib/env';
 
 function NavLink({ href, label }: { href: string; label: string }) {
   const pathname = usePathname();
@@ -23,11 +21,6 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export function Nav() {
   const { user, profile, signOut } = useAuth();
-  const { address: connectedAddress } = useAccount();
-  // Admin gating mirrors the contract: only the wallet *currently connected* can sign
-  // adminResolve(). Doesn't matter which wallet they onboarded with.
-  const isAdmin =
-    !!env.admin.address && connectedAddress?.toLowerCase() === env.admin.address;
 
   return (
     <header className="sticky top-0 z-40 border-b border-border glass">
@@ -47,7 +40,6 @@ export function Nav() {
               <NavLink href="/feed" label="Feed" />
               <NavLink href="/dashboard" label="Dashboard" />
               {profile.role === 'buyer' && <NavLink href="/jobs/new" label="Post a job" />}
-              {isAdmin && <NavLink href="/admin" label="Admin" />}
             </>
           )}
 
