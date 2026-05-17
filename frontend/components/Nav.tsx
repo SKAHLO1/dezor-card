@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
+import { useAccount } from 'wagmi';
 import { useAuth } from '@/components/AuthProvider';
 import { Avatar } from '@/components/ui';
 import { env } from '@/lib/env';
@@ -22,15 +23,18 @@ function NavLink({ href, label }: { href: string; label: string }) {
 
 export function Nav() {
   const { user, profile, signOut } = useAuth();
+  const { address: connectedAddress } = useAccount();
+  // Admin gating mirrors the contract: only the wallet *currently connected* can sign
+  // adminResolve(). Doesn't matter which wallet they onboarded with.
   const isAdmin =
-    !!profile?.walletAddress && profile.walletAddress === env.admin.address && !!env.admin.address;
+    !!env.admin.address && connectedAddress?.toLowerCase() === env.admin.address;
 
   return (
     <header className="sticky top-0 z-40 border-b border-border glass">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
         <Link href={user ? '/feed' : '/'} className="flex items-center gap-2">
           <span className="font-display text-lg font-bold tracking-tight">
-            Sat<span className="gradient-text">Lock</span>
+            Trustie<span className="gradient-text">Work</span>
           </span>
           <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent-soft">
             Matsnet

@@ -57,7 +57,7 @@ function Feed() {
           <p className="mt-1 text-sm text-muted">
             {profile?.role === 'developer'
               ? 'Browse open jobs, claim one, and get paid in MUSD when the work lands.'
-              : 'Every job posted to the SatLock marketplace.'}
+              : 'Every job posted to the TrustieWork marketplace.'}
           </p>
         </div>
         {profile?.role === 'buyer' && <LinkButton href="/jobs/new">Post a job</LinkButton>}

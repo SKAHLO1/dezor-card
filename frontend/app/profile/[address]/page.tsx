@@ -30,7 +30,7 @@ function Profile({ address }: { address: string }) {
       <AppShell>
         <EmptyState
           title="Profile not found"
-          body={`No SatLock user is linked to ${shortAddr(address)}.`}
+          body={`No TrustieWork user is linked to ${shortAddr(address)}.`}
         />
       </AppShell>
     );

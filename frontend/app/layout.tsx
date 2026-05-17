@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const display = Space_Grotesk({ subsets: ['latin'], variable: '--font-display' });
 
 export const metadata: Metadata = {
-  title: 'SatLock — Bitcoin-native developer-services escrow on Mezo',
+  title: 'TrustieWork — Bitcoin-native developer-services escrow on Mezo',
   description:
     'A Fiverr-style marketplace, on-chain. Buyers fund jobs in MUSD or BTC collateral; an AI layer reviews deliverables; disputes go AI-first, then to a human admin. Built on Mezo.',
 };

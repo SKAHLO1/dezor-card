@@ -29,7 +29,7 @@ const tracks = [
   {
     tag: 'Bitcoin Track',
     title: 'Bank on Bitcoin',
-    body: 'Escrow is a core financial primitive. SatLock lets a buyer’s BTC keep working as trove collateral while it secures real freelance work — Bitcoin doing a job, not just sitting.',
+    body: 'Escrow is a core financial primitive. TrustieWork lets a buyer’s BTC keep working as trove collateral while it secures real freelance work — Bitcoin doing a job, not just sitting.',
   },
   {
     tag: 'MEZO Track',
@@ -55,7 +55,7 @@ export default function Home() {
           <span className="gradient-text">protected on Bitcoin.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-xl text-lg text-muted">
-          SatLock is a Fiverr-style marketplace built on-chain. Buyers fund jobs in MUSD or BTC
+          TrustieWork is a Fiverr-style marketplace built on-chain. Buyers fund jobs in MUSD or BTC
           collateral, an AI layer reviews deliverables, and disputes go AI-first then to a human
           admin — so both sides are protected.
         </p>
@@ -99,7 +99,7 @@ export default function Home() {
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-8 text-sm text-faint">
-          <span>SatLock — Bitcoin-native developer-services escrow.</span>
+          <span>TrustieWork — Bitcoin-native developer-services escrow.</span>
           <Link href="/signup" className="text-accent-soft hover:underline">
             Create an account →
           </Link>

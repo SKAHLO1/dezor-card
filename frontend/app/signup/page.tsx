@@ -52,7 +52,7 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="You'll connect a Mezo wallet on the next step — it's required to use SatLock."
+      subtitle="You'll connect a Mezo wallet on the next step — it's required to use TrustieWork."
     >
       {!firebaseReady && <ConfigNotice />}
       <form onSubmit={withEmail} className="space-y-4">

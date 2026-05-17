@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAccount } from 'wagmi';
+import { useAccount, useSignMessage } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { Protected } from '@/components/AppShell';
 import { Button, Card, Field, Input, Textarea } from '@/components/ui';
@@ -15,6 +15,7 @@ function OnboardingForm() {
   const router = useRouter();
   const { refreshProfile } = useAuth();
   const { address, isConnected } = useAccount();
+  const { signMessageAsync } = useSignMessage();
 
   const [role, setRole] = useState<Role | null>(null);
   const [displayName, setDisplayName] = useState('');
@@ -22,6 +23,7 @@ function OnboardingForm() {
   const [skills, setSkills] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<string | null>(null);
 
   const canSubmit = !!role && isConnected && !!address && displayName.trim().length > 1;
 
@@ -30,9 +32,20 @@ function OnboardingForm() {
     setError(null);
     setBusy(true);
     try {
+      setStep('Requesting wallet challenge…');
+      const { message } = await api.post<{ message: string; nonce: string; issuedAt: number }>(
+        '/auth/wallet-challenge',
+        { walletAddress: address },
+      );
+
+      setStep('Sign in your wallet to confirm ownership…');
+      const walletSignature = await signMessageAsync({ message });
+
+      setStep('Saving profile…');
       await api.post<UserProfile>('/users', {
         role,
         walletAddress: address,
+        walletSignature,
         displayName: displayName.trim(),
         bio: bio.trim(),
         skills: skills
@@ -45,6 +58,7 @@ function OnboardingForm() {
     } catch (err) {
       setError((err as Error).message);
       setBusy(false);
+      setStep(null);
     }
   };
 
@@ -52,7 +66,7 @@ function OnboardingForm() {
     <div className="mx-auto max-w-xl px-6 py-16">
       <h1 className="font-display text-2xl font-bold">Set up your profile</h1>
       <p className="mt-1 mb-8 text-sm text-muted">
-        Two quick things — pick how you&apos;ll use SatLock and link your Mezo wallet.
+        Two quick things — pick how you&apos;ll use TrustieWork and link your Mezo wallet.
       </p>
 
       {/* role */}
@@ -117,6 +131,9 @@ function OnboardingForm() {
 
         {error && (
           <p className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">{error}</p>
+        )}
+        {step && !error && (
+          <p className="text-sm text-muted">{step}</p>
         )}
 
         <Button onClick={submit} disabled={!canSubmit} loading={busy} className="w-full">

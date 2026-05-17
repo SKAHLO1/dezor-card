@@ -26,6 +26,13 @@ function JobDetail({ id }: { id: string }) {
   const [appealReason, setAppealReason] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Recovery panel state — used when the buyer owns the job on-chain but has no off-chain
+  // metadata (typical of a job posted via a tx that succeeded after the sync step failed).
+  const [recoverTitle, setRecoverTitle] = useState('');
+  const [recoverDesc, setRecoverDesc] = useState('');
+  const [recoverTags, setRecoverTags] = useState('');
+  const [recoverBusy, setRecoverBusy] = useState(false);
+  const [recoverError, setRecoverError] = useState<string | null>(null);
 
   const loadOffchain = useCallback(() => {
     api.get<JobMeta>(`/jobs/${id}`).then(setMeta).catch(() => setMeta(null));
@@ -132,6 +139,28 @@ function JobDetail({ id }: { id: string }) {
   const cancel = async () => (await action.run('cancelOpenJob', [BigInt(id)])) && refresh();
   const reclaim = async () => (await action.run('reclaimExpired', [BigInt(id)])) && refresh();
 
+  const recoverMetadata = async () => {
+    if (!job) return;
+    setRecoverError(null);
+    setRecoverBusy(true);
+    try {
+      await api.post('/jobs/sync', {
+        onchainId: id,
+        title: recoverTitle.trim(),
+        description: recoverDesc.trim(),
+        tags: recoverTags.split(',').map((t) => t.trim()).filter(Boolean),
+        budgetMusd: undefined, // indexer is the source of truth for on-chain fields
+        fundingMode: job.mode === FundingMode.BTC ? 'BTC' : 'MUSD',
+        deadline: Number(job.deadline),
+      });
+      loadOffchain();
+    } catch (err) {
+      setRecoverError((err as Error).message);
+    } finally {
+      setRecoverBusy(false);
+    }
+  };
+
   if (isLoading || !job) {
     return (
       <AppShell>
@@ -190,6 +219,53 @@ function JobDetail({ id }: { id: string }) {
           </p>
         </Card>
       </div>
+
+      {/* recovery — buyer owns the job on-chain but no metadata was saved off-chain */}
+      {isEmployer && !meta?.title && (
+        <Card className="mt-4 border-warning/40 bg-warning/5">
+          <p className="font-semibold">Finish setting up this job</p>
+          <p className="mt-1 text-sm text-muted">
+            Your funds are locked on-chain (Job #{id}), but no public title or description was saved.
+            Developers won&apos;t see this job in the feed until you add them — no new transaction needed.
+          </p>
+          <div className="mt-3 space-y-3">
+            <Field label="Title">
+              <Input
+                value={recoverTitle}
+                onChange={(e) => setRecoverTitle(e.target.value)}
+                placeholder="e.g. Build a Next.js landing page"
+              />
+            </Field>
+            <Field label="Description">
+              <Textarea
+                rows={4}
+                value={recoverDesc}
+                onChange={(e) => setRecoverDesc(e.target.value)}
+                placeholder="Scope, acceptance criteria, links…"
+              />
+            </Field>
+            <Field label="Tags" hint="Comma-separated.">
+              <Input
+                value={recoverTags}
+                onChange={(e) => setRecoverTags(e.target.value)}
+                placeholder="react, frontend, design"
+              />
+            </Field>
+            {recoverError && (
+              <p className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">
+                {recoverError}
+              </p>
+            )}
+            <Button
+              onClick={recoverMetadata}
+              disabled={recoverBusy || recoverTitle.trim().length < 3}
+              loading={recoverBusy}
+            >
+              Save job details
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {/* description */}
       <Card className="mt-4">
@@ -453,6 +529,7 @@ function JobDetail({ id }: { id: string }) {
 
 function VerdictBlock({ label, v }: { label: string; v: AiVerdict }) {
   const good = v.recommendation === 'complete';
+  const unreliable = v.quality === 'unreachable' || v.quality === 'empty' || (v.contentBytes ?? 0) === 0;
   return (
     <div className="mb-3 rounded-lg border border-border bg-bg-elevated p-3 last:mb-0">
       <div className="flex items-center justify-between">
@@ -472,7 +549,23 @@ function VerdictBlock({ label, v }: { label: string; v: AiVerdict }) {
             </a>
           </>
         )}
+        {v.escalated && ' · escalated to admin'}
       </p>
+      {(v.digestNote || v.quality) && (
+        <div
+          className={`mt-2 rounded-md border p-2 text-xs ${
+            unreliable
+              ? 'border-warning/40 bg-warning/10 text-warning'
+              : 'border-border bg-surface-2 text-faint'
+          }`}
+        >
+          <span className="font-medium">
+            {unreliable ? 'Low-signal input — AI could not verify the deliverable: ' : 'AI input: '}
+          </span>
+          {v.digestNote ?? `quality: ${v.quality}`}
+          {v.contentBytes !== undefined && ` (${v.contentBytes} chars analysed)`}
+        </div>
+      )}
     </div>
   );
 }

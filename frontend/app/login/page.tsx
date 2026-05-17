@@ -44,7 +44,7 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthLayout title="Welcome back" subtitle="Log in to your SatLock account.">
+    <AuthLayout title="Welcome back" subtitle="Log in to your TrustieWork account.">
       {!firebaseReady && <ConfigNotice />}
       <form onSubmit={withEmail} className="space-y-4">
         <Field label="Email">
@@ -80,7 +80,7 @@ export default function LoginPage() {
       </Button>
 
       <p className="mt-6 text-center text-sm text-muted">
-        New to SatLock?{' '}
+        New to TrustieWork?{' '}
         <Link href="/signup" className="text-accent-soft hover:underline">
           Create an account
         </Link>
@@ -103,7 +103,7 @@ export function AuthLayout({
     <div className="flex min-h-screen items-center justify-center px-6 py-16">
       <div className="w-full max-w-md">
         <Link href="/" className="mb-8 block text-center font-display text-2xl font-bold">
-          Sat<span className="gradient-text">Lock</span>
+          Trustie<span className="gradient-text">Work</span>
         </Link>
         <div className="card p-7">
           <h1 className="font-display text-xl font-bold">{title}</h1>
