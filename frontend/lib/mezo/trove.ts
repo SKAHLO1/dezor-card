@@ -11,20 +11,23 @@ import { env } from '@/lib/env';
  * surfaced as an explicit health preview so the buyer sees what they're signing for.
  */
 
+// Use `||` (not `??`) because env.app.* fields fall back to '' rather than undefined —
+// an empty string would short-circuit `??` and produce Number('') === 0, silently zeroing
+// every threshold and breaking the trove preview.
 export const MIN_COLLATERAL_RATIO = Number(
-  process.env.NEXT_PUBLIC_TROVE_MIN_CR ?? env.app.troveMinCR ?? '1.10',
+  process.env.NEXT_PUBLIC_TROVE_MIN_CR || env.app.troveMinCR || '1.10',
 );
 /** Recommended safety buffer above the minimum — keeps the trove out of immediate liquidation. */
 export const SAFE_COLLATERAL_RATIO = Number(
-  process.env.NEXT_PUBLIC_TROVE_SAFE_CR ?? env.app.troveSafeCR ?? '1.50',
+  process.env.NEXT_PUBLIC_TROVE_SAFE_CR || env.app.troveSafeCR || '1.50',
 );
 /** Minimum MUSD debt the protocol will issue. Mezo's value is in the low thousands. */
 export const MIN_NET_DEBT_MUSD = Number(
-  process.env.NEXT_PUBLIC_TROVE_MIN_DEBT_MUSD ?? env.app.troveMinDebt ?? '1800',
+  process.env.NEXT_PUBLIC_TROVE_MIN_DEBT_MUSD || env.app.troveMinDebt || '1800',
 );
 /** Default BTC price used for previews; override per-buyer in the form. */
 export const DEFAULT_BTC_PRICE_USD = Number(
-  process.env.NEXT_PUBLIC_BTC_PRICE_USD ?? env.app.btcPriceUsd ?? '95000',
+  process.env.NEXT_PUBLIC_BTC_PRICE_USD || env.app.btcPriceUsd || '95000',
 );
 
 export type TroveHealth = 'safe' | 'tight' | 'liquidation';
