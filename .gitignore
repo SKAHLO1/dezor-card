@@ -5,6 +5,11 @@
 **/.env
 **/.env.local
 
+# firebase service-account credentials — NEVER commit these
+**/firebase-service-account*.json
+**/serviceAccountKey*.json
+**/*-firebase-adminsdk-*.json
+
 # next
 frontend/.next
 frontend/out
