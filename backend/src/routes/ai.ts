@@ -16,8 +16,12 @@ aiRouter.get('/ai/verdicts/:jobId', async (req, res) => {
       .where('jobId', '==', req.params.jobId)
       .get();
     const verdicts = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => (Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0)))
+      .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+      .sort(
+        (a, b) =>
+          Number((b as { createdAt?: number }).createdAt ?? 0) -
+          Number((a as { createdAt?: number }).createdAt ?? 0),
+      )
       .slice(0, 10);
     return res.json({ verdicts });
   } catch (err) {

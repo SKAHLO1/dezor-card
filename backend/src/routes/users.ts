@@ -91,8 +91,12 @@ usersRouter.get('/users/:address', async (req, res) => {
 
     const reviewsSnap = await db.collection('reviews').where('toWallet', '==', wallet).get();
     const reviews = reviewsSnap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
+      .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+      .sort(
+        (a, b) =>
+          Number((b as { createdAt?: number }).createdAt ?? 0) -
+          Number((a as { createdAt?: number }).createdAt ?? 0),
+      )
       .slice(0, 50);
 
     return res.json({ user, reviews });

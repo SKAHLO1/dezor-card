@@ -4,14 +4,24 @@ import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
 
 export const appealsRouter = Router();
 
-/** Serialize all bigints in a Job tuple to strings so JSON.stringify doesn't throw. */
-function serializeJob(j: Awaited<ReturnType<typeof publicClient.readContract>> & {
+/** On-chain Job tuple shape — mirrors contracts/src/SatLockEscrow.sol. */
+interface JobStruct {
+  employer: `0x${string}`;
+  freelancer: `0x${string}`;
   amount: bigint;
   btcCollateral: bigint;
+  mode: number;
+  status: number;
   deadline: bigint;
   claimedAt: bigint;
   appealDeadline: bigint;
-}) {
+  aiVerdictApprove: boolean;
+  rating: number;
+  detailsURI: string;
+}
+
+/** Serialize all bigints in a Job tuple to strings so JSON.stringify doesn't throw. */
+function serializeJob(j: JobStruct) {
   return {
     employer: j.employer,
     freelancer: j.freelancer,
@@ -108,16 +118,17 @@ appealsRouter.get('/admin/disputes', requireAuth, requireAdmin, async (_req, res
 
         const verdicts = verdictsSnap
           ? verdictsSnap.docs
-              .map((d) => ({ id: d.id, ...d.data() }))
+              .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
               .sort(
-                (a: { createdAt?: number }, b: { createdAt?: number }) =>
-                  Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0),
+                (a, b) =>
+                  Number((b as { createdAt?: number }).createdAt ?? 0) -
+                  Number((a as { createdAt?: number }).createdAt ?? 0),
               )
           : [];
 
         return {
           id,
-          onchain: serializeJob(j as never),
+          onchain: serializeJob(j as unknown as JobStruct),
           meta: meta ?? null,
           verdicts,
           appeal: appealSnap ?? null,
@@ -137,8 +148,12 @@ appealsRouter.get('/appeals', requireAuth, requireAdmin, async (_req, res) => {
   try {
     const snap = await getDb().collection('appeals').where('status', '==', 'open').get();
     const appeals = snap.docs
-      .map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
+      .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+      .sort(
+        (a, b) =>
+          Number((a as { createdAt?: number }).createdAt ?? 0) -
+          Number((b as { createdAt?: number }).createdAt ?? 0),
+      );
     return res.json({ appeals });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
