@@ -83,7 +83,14 @@ export function useEscrowAction() {
         });
         setTxHash(hash);
         setStatus('confirming');
-        await publicClient?.waitForTransactionReceipt({ hash });
+        const receipt = await publicClient?.waitForTransactionReceipt({ hash });
+        // viem returns the receipt even when the tx reverted — treat that as a failure
+        // so callers don't proceed with off-chain side-effects after an on-chain revert.
+        if (receipt && receipt.status !== 'success') {
+          setError('Transaction reverted on-chain. Check the explorer or MetaMask Activity for the reason.');
+          setStatus('error');
+          return null;
+        }
         setStatus('success');
         return hash;
       } catch (err) {

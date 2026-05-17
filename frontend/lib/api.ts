@@ -15,12 +15,35 @@ async function authHeader(): Promise<Record<string, string>> {
   return { authorization: `Bearer ${token}` };
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export interface AdminProof {
+  timestamp: number;
+  signature: string;
+}
+
+/** Build the canonical admin-proof message — must match backend/src/firebase.ts. */
+export function adminProofMessage(timestamp: number): string {
+  return `TrustieWork admin proof @ ${timestamp}`;
+}
+
+function adminHeaders(proof?: AdminProof | null): Record<string, string> {
+  if (!proof) return {};
+  return {
+    'x-admin-timestamp': String(proof.timestamp),
+    'x-admin-signature': proof.signature,
+  };
+}
+
+interface RequestOpts {
+  adminProof?: AdminProof | null;
+}
+
+async function request<T>(path: string, init?: RequestInit, opts?: RequestOpts): Promise<T> {
   const res = await fetch(`${env.backend.url}${path}`, {
     ...init,
     headers: {
       'content-type': 'application/json',
       ...(await authHeader()),
+      ...adminHeaders(opts?.adminProof),
       ...(init?.headers ?? {}),
     },
   });
@@ -31,9 +54,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+  get: <T>(path: string, opts?: RequestOpts) => request<T>(path, undefined, opts),
+  post: <T>(path: string, body?: unknown, opts?: RequestOpts) =>
+    request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }, opts),
 };
 
 /* ---- shared response shapes ---- */
@@ -89,6 +112,12 @@ export interface AiVerdict {
   txHash?: string;
   submissionUrl?: string;
   createdAt?: number;
+  /** How the deliverable was read by the AI — surface in the UI so reviewers can tell
+   *  "the AI couldn't see the work" apart from "the AI judged the work and said no". */
+  quality?: 'github-full' | 'http-fetched' | 'unreachable' | 'empty';
+  contentBytes?: number;
+  digestNote?: string;
+  escalated?: boolean;
 }
 
 export interface Appeal {

@@ -1,7 +1,11 @@
 export const env = {
   app: {
-    name: process.env.NEXT_PUBLIC_APP_NAME ?? 'SatLock',
+    name: process.env.NEXT_PUBLIC_APP_NAME ?? 'TrustieWork',
     walletConnectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? '',
+    troveMinCR: process.env.NEXT_PUBLIC_TROVE_MIN_CR ?? '',
+    troveSafeCR: process.env.NEXT_PUBLIC_TROVE_SAFE_CR ?? '',
+    troveMinDebt: process.env.NEXT_PUBLIC_TROVE_MIN_DEBT_MUSD ?? '',
+    btcPriceUsd: process.env.NEXT_PUBLIC_BTC_PRICE_USD ?? '',
   },
   mezo: {
     chainId: Number(process.env.NEXT_PUBLIC_MEZO_CHAIN_ID ?? 31611),
