@@ -1,26 +1,35 @@
 {
-  "name": "satlock-backend",
+  "name": "trustiework-backend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:indexer": "tsx watch src/indexer.ts",
+    "dev:all": "concurrently -k -n api,idx -c blue,magenta \"pnpm run dev\" \"pnpm run dev:indexer\"",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "start:indexer": "node dist/indexer.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
     "firebase-admin": "^13.0.0",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
     "viem": "^2.21.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^22",
+    "concurrently": "^9.1.0",
     "tsx": "^4.19.0",
-    "typescript": "5.7.3"
+    "typescript": "5.7.3",
+    "vitest": "^2.1.0"
   }
 }

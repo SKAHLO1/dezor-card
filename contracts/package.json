@@ -1,17 +1,22 @@
 {
-  "name": "satlock-contracts",
+  "name": "trustiework-contracts",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "compile": "hardhat compile",
+    "compile": "hardhat compile && pnpm run export:abi",
+    "export:abi": "tsx scripts/export-artifacts.ts",
     "deploy": "hardhat run scripts/deploy.ts --network matsnet",
+    "propagate": "tsx scripts/propagate-address.ts",
+    "bootstrap": "pnpm run compile && pnpm run deploy && pnpm run propagate",
     "test": "hardhat test"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^1.0.12",
     "@nomicfoundation/hardhat-toolbox-viem": "^3.0.0",
     "chai": "^4.5.0",
+    "dotenv": "^16.4.5",
     "hardhat": "^2.22.0",
+    "tsx": "^4.19.0",
     "typescript": "5.7.3"
   }
 }
