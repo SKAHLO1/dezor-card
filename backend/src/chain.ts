@@ -1,10 +1,10 @@
-import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, http, parseAbiItem } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { env } from './env';
 
 export const mezoMatsnet = defineChain({
   id: 31611,
-  name: 'Mezo Matsnet',
+  name: 'Mezo Mastnet',
   nativeCurrency: { name: 'Bitcoin', symbol: 'BTC', decimals: 18 },
   rpcUrls: { default: { http: [env.mezo.rpcUrl] } },
   testnet: true,
@@ -42,7 +42,7 @@ const jobTuple = {
   ],
 } as const;
 
-// ABI subset the backend needs: read a job, and resolve a disputed job.
+// ABI subset the backend needs: read a job, the next id, resolveDispute(), and lifecycle events.
 export const escrowAbi = [
   {
     type: 'function',
@@ -69,6 +69,18 @@ export const escrowAbi = [
     ],
     outputs: [],
   },
+  parseAbiItem('event JobPosted(uint256 indexed id, address indexed employer, uint256 amount, uint8 mode, uint64 deadline)'),
+  parseAbiItem('event JobClaimed(uint256 indexed id, address indexed freelancer)'),
+  parseAbiItem('event JobUnclaimed(uint256 indexed id, address indexed freelancer)'),
+  parseAbiItem('event WorkSubmitted(uint256 indexed id, string submissionURI)'),
+  parseAbiItem('event JobDisputed(uint256 indexed id, address indexed by)'),
+  parseAbiItem('event DisputeResolved(uint256 indexed id, bool approve, string rationaleURI, uint64 appealDeadline)'),
+  parseAbiItem('event JobAppealed(uint256 indexed id, address indexed by)'),
+  parseAbiItem('event AdminResolved(uint256 indexed id, bool approve, string rationaleURI)'),
+  parseAbiItem('event JobReleased(uint256 indexed id, address indexed freelancer, uint256 amount, string rationaleURI)'),
+  parseAbiItem('event JobRefunded(uint256 indexed id, address indexed employer, uint256 amount, string reason)'),
+  parseAbiItem('event JobCancelled(uint256 indexed id, address indexed employer, uint256 amount)'),
+  parseAbiItem('event ReviewLeft(uint256 indexed id, address indexed freelancer, uint8 rating)'),
 ] as const;
 
 export const escrowAddress = env.mezo.escrowAddress;
