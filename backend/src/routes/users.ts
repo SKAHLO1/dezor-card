@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { consumeWalletProof } from './auth';
 
 export const usersRouter = Router();
 
@@ -14,7 +15,7 @@ usersRouter.post('/users', requireAuth, async (req, res) => {
   if (!firebaseEnabled) {
     return res.status(503).json({ error: 'user storage not configured (set FIREBASE_SERVICE_ACCOUNT)' });
   }
-  const { role, walletAddress, displayName, bio, skills } = req.body ?? {};
+  const { role, walletAddress, walletSignature, displayName, bio, skills } = req.body ?? {};
   if (role !== 'buyer' && role !== 'developer') {
     return res.status(400).json({ error: 'role must be "buyer" or "developer"' });
   }
@@ -26,6 +27,22 @@ usersRouter.post('/users', requireAuth, async (req, res) => {
   try {
     const ref = getDb().collection('users').doc(req.uid!);
     const existing = await ref.get();
+    const existingWallet = (existing.data()?.walletAddress as string | undefined)?.toLowerCase();
+
+    // If the caller is binding a wallet that isn't already on file, require a fresh signature
+    // proving they control the private key. Existing wallets pass through unchanged.
+    if (wallet !== existingWallet) {
+      if (!walletSignature) {
+        return res
+          .status(400)
+          .json({ error: 'walletSignature required — sign the /auth/wallet-challenge message first' });
+      }
+      try {
+        await consumeWalletProof(req.uid!, wallet, String(walletSignature));
+      } catch (err) {
+        return res.status(401).json({ error: (err as Error).message });
+      }
+    }
     await ref.set(
       {
         uid: req.uid,
@@ -72,13 +89,11 @@ usersRouter.get('/users/:address', async (req, res) => {
     if (snap.empty) return res.status(404).json({ error: 'user not found' });
     const user = { id: snap.docs[0].id, ...snap.docs[0].data() };
 
-    const reviewsSnap = await db
-      .collection('reviews')
-      .where('toWallet', '==', wallet)
-      .orderBy('createdAt', 'desc')
-      .limit(50)
-      .get();
-    const reviews = reviewsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const reviewsSnap = await db.collection('reviews').where('toWallet', '==', wallet).get();
+    const reviews = reviewsSnap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0))
+      .slice(0, 50);
 
     return res.json({ user, reviews });
   } catch (err) {
