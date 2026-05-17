@@ -1,38 +1,25 @@
 import { Router } from 'express';
-import { escrowAbi, escrowAddress, publicClient, arbiterWallet, Status } from '../chain';
-import { getVerdict } from '../arbiter';
-import { buildSubmissionDigest } from '../github';
 import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { reviewSubmission, arbitrateDispute } from '../services/ai';
 
 export const aiRouter = Router();
 
-/** Persist an AI verdict to Firestore if storage is configured (best-effort). */
-async function recordVerdict(
-  jobId: string,
-  layer: 'submission' | 'dispute',
-  data: Record<string, unknown>,
-) {
-  if (!firebaseEnabled) return;
-  try {
-    await getDb()
-      .collection('aiVerdicts')
-      .add({ jobId, layer, ...data, createdAt: Date.now() });
-  } catch (err) {
-    console.error('Failed to record AI verdict:', err);
-  }
-}
-
-/** Latest AI verdicts for a job (submission review + any dispute arbitration). */
+/**
+ * Latest AI verdicts for a job (submission review + any dispute arbitration).
+ * Sorts in memory to avoid the Firestore composite-index requirement on (where + orderBy).
+ */
 aiRouter.get('/ai/verdicts/:jobId', async (req, res) => {
   if (!firebaseEnabled) return res.json({ verdicts: [] });
   try {
     const snap = await getDb()
       .collection('aiVerdicts')
       .where('jobId', '==', req.params.jobId)
-      .orderBy('createdAt', 'desc')
-      .limit(10)
       .get();
-    return res.json({ verdicts: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+    const verdicts = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (Number(b.createdAt ?? 0) - Number(a.createdAt ?? 0)))
+      .slice(0, 10);
+    return res.json({ verdicts });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
   }
@@ -49,70 +36,31 @@ aiRouter.post('/ai/review-submission', requireAuth, async (req, res) => {
   if (!jobId || !submissionUrl) {
     return res.status(400).json({ error: 'jobId and submissionUrl are required' });
   }
-
   try {
-    const job = await publicClient.readContract({
-      address: escrowAddress,
-      abi: escrowAbi,
-      functionName: 'getJob',
-      args: [BigInt(jobId)],
-    });
-
-    const { digest, isGithub, resolved } = await buildSubmissionDigest(submissionUrl);
-    const verdict = await getVerdict(job.detailsURI, digest);
-
-    await recordVerdict(jobId, 'submission', { ...verdict, submissionUrl, isGithub, resolved });
-
-    return res.json({ jobId, submissionUrl, isGithub, resolved, ...verdict });
+    const result = await reviewSubmission(jobId, submissionUrl);
+    return res.json(result);
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
   }
 });
 
 /**
- * Second AI layer — dispute arbitration. Re-evaluates a disputed job and, if it is in the
- * Disputed state, signs resolveDispute() from the arbiter wallet. This opens the on-chain
- * appeal window; it does not move funds.
+ * Second AI layer — dispute arbitration. Re-evaluates a disputed job and, if confidence
+ * clears the threshold, signs resolveDispute() from the arbiter wallet. Below threshold the
+ * verdict is recorded and the case is escalated to the human admin queue.
  */
 aiRouter.post('/ai/arbitrate/:jobId', requireAuth, async (req, res) => {
-  const jobId = BigInt(req.params.jobId);
+  const jobId = req.params.jobId;
   const submissionUrl = String(req.body?.submissionUrl ?? '').trim();
   if (!submissionUrl) {
     return res.status(400).json({ error: 'submissionUrl is required' });
   }
-
   try {
-    const job = await publicClient.readContract({
-      address: escrowAddress,
-      abi: escrowAbi,
-      functionName: 'getJob',
-      args: [jobId],
-    });
-
-    if (job.status !== Status.Disputed) {
-      return res
-        .status(409)
-        .json({ error: `job ${jobId} is not in the Disputed state (status ${job.status})` });
-    }
-
-    const { digest } = await buildSubmissionDigest(submissionUrl);
-    const verdict = await getVerdict(job.detailsURI, digest);
-    const approve = verdict.recommendation === 'complete';
-
-    // Inline the rationale as a data URI so the decision is permanently on-chain-referenced.
-    const rationaleURI = `data:text/plain,${encodeURIComponent(verdict.rationale)}`;
-
-    const txHash = await arbiterWallet.writeContract({
-      address: escrowAddress,
-      abi: escrowAbi,
-      functionName: 'resolveDispute',
-      args: [jobId, approve, rationaleURI],
-    });
-
-    await recordVerdict(jobId.toString(), 'dispute', { ...verdict, approve, txHash });
-
-    return res.json({ jobId: jobId.toString(), approve, ...verdict, txHash });
+    const result = await arbitrateDispute(jobId, submissionUrl);
+    return res.json(result);
   } catch (err) {
-    return res.status(500).json({ error: (err as Error).message });
+    const msg = (err as Error).message;
+    const status = msg.includes('not in the Disputed state') ? 409 : 500;
+    return res.status(status).json({ error: msg });
   }
 });
