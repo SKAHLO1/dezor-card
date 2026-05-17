@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
 
 export const reviewsRouter = Router();
 
 /**
- * Review text. The 1-5 rating itself is written on-chain by approveAndRelease() for
- * trustless reputation; this stores the accompanying written review and keeps each
- * developer's aggregate rating on their user profile in sync.
+ * Review text. The 1-5 rating is written on-chain by approveAndRelease(); this stores the
+ * accompanying written review and keeps each developer's aggregate rating on their user
+ * profile in sync. We re-read the chain to confirm the caller really is the employer of
+ * a released job before accepting the review — clients cannot spam reviews.
  */
 reviewsRouter.post('/reviews', requireAuth, async (req, res) => {
   if (!firebaseEnabled) {
@@ -20,8 +22,28 @@ reviewsRouter.post('/reviews', requireAuth, async (req, res) => {
   const wallet = String(toWallet).toLowerCase();
 
   try {
+    // Authorise against the chain — the caller's linked wallet must be the employer of a
+    // released job that pays this freelancer. Belt-and-braces against spoofed reviews.
+    const job = await publicClient.readContract({
+      address: escrowAddress,
+      abi: escrowAbi,
+      functionName: 'getJob',
+      args: [BigInt(String(jobId))],
+    });
+    if (job.status !== Status.Released) {
+      return res.status(409).json({ error: 'job is not in the Released state' });
+    }
+    if (job.employer.toLowerCase() !== req.walletAddress) {
+      return res.status(403).json({ error: 'only the buyer can leave the review' });
+    }
+    if (job.freelancer.toLowerCase() !== wallet) {
+      return res.status(400).json({ error: 'toWallet does not match the job freelancer' });
+    }
+
     const db = getDb();
-    await db.collection('reviews').add({
+    // One review per (jobId, employer) — re-submitting overwrites the prior text.
+    const reviewId = `${String(jobId)}_${req.walletAddress}`;
+    await db.collection('reviews').doc(reviewId).set({
       jobId: String(jobId),
       fromUid: req.uid,
       fromWallet: req.walletAddress ?? null,
