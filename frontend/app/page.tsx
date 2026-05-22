@@ -25,18 +25,6 @@ const steps = [
   },
 ];
 
-const tracks = [
-  {
-    tag: 'Bitcoin Track',
-    title: 'Bank on Bitcoin',
-    body: 'Escrow is a core financial primitive. TrustieWork lets a buyer’s BTC keep working as trove collateral while it secures real freelance work — Bitcoin doing a job, not just sitting.',
-  },
-  {
-    tag: 'MEZO Track',
-    title: 'MEZO Utilization',
-    body: 'MUSD is the settlement currency end-to-end, with direct integration into Mezo’s BorrowerOperations trove system for BTC-collateralized funding.',
-  },
-];
 
 export default function Home() {
   return (
@@ -81,21 +69,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* tracks */}
-      <section className="mx-auto max-w-6xl px-6 pb-28">
-        <h2 className="mb-8 font-display text-2xl font-bold">Built for two hackathon tracks</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          {tracks.map((t) => (
-            <div key={t.title} className="card p-7">
-              <span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-0.5 text-xs font-semibold text-accent-soft">
-                {t.tag}
-              </span>
-              <h3 className="mt-4 font-display text-xl font-bold">{t.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{t.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
 
       <footer className="border-t border-border">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-8 text-sm text-faint">

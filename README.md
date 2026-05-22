@@ -252,9 +252,10 @@ Detailed step-by-step in the deploy notes; the short version:
 1. **Vercel** — Import the GitHub repo. Root directory: `frontend`. Add every `NEXT_PUBLIC_*`
    env var. Deploy → note the URL.
 2. **Render** — New Web Service. Root: `backend`. Build: `pnpm install --frozen-lockfile && pnpm build`.
-   Start: `pnpm start`. Add every backend env var. **Use base64 mode** for the Firebase
-   service account (Render has no filesystem for file uploads). Set `FRONTEND_ORIGIN` to the
-   Vercel URL.
+   Start: `pnpm start`. Add every backend env var. For the Firebase service account, use
+   **Render Secret Files**: upload `firebase-service-account.json`, then set
+   `FIREBASE_SERVICE_ACCOUNT_PATH=/etc/secrets/firebase-service-account.json` (no base64
+   mangling). Set `FRONTEND_ORIGIN` to the Vercel URL.
 3. Update Vercel's `NEXT_PUBLIC_BACKEND_URL` to point at the Render URL → redeploy.
 4. Firebase Console → Authentication → Settings → Authorized domains → add the Vercel
    hostname (otherwise Google sign-in throws `auth/unauthorized-domain` in prod).
