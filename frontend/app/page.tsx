@@ -43,7 +43,7 @@ export default function Home() {
           <span className="gradient-text">protected on Bitcoin.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-xl text-lg text-muted">
-          TrustieWork is a Fiverr-style marketplace built on-chain. Buyers fund jobs in MUSD or BTC
+          TrustieWork is a marketplace built on-chain. Buyers fund jobs in MUSD or BTC
           collateral, an AI layer reviews deliverables, and disputes go AI-first then to a human
           admin — so both sides are protected.
         </p>
