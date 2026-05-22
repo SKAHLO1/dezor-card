@@ -2,7 +2,6 @@
 **/node_modules
 
 # env
-**/.env
 **/.env.local
 
 # firebase service-account credentials — NEVER commit these
@@ -25,3 +24,4 @@ contracts/typechain-types
 backend/dist
 
 .DS_Store
+config.bat
