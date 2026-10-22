@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 import { auth, googleProvider, firebaseReady } from '@/lib/firebase';
 import { Button, Field, Input } from '@/components/ui';
+import { Logo } from '@/components/Nav';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -81,7 +82,7 @@ export default function LoginPage() {
 
       <p className="mt-6 text-center text-sm text-muted">
         New to TrustieWork?{' '}
-        <Link href="/signup" className="text-accent-soft hover:underline">
+        <Link href="/signup" className="font-semibold text-fg underline">
           Create an account
         </Link>
       </p>
@@ -102,8 +103,8 @@ export function AuthLayout({
   return (
     <div className="flex min-h-screen items-center justify-center px-6 py-16">
       <div className="w-full max-w-md">
-        <Link href="/" className="mb-8 block text-center font-display text-2xl font-bold">
-          Trustie<span className="gradient-text">Work</span>
+        <Link href="/" className="mb-8 flex justify-center" aria-label="TrustieWork home">
+          <Logo height={40} />
         </Link>
         <div className="card p-7">
           <h1 className="font-display text-xl font-bold">{title}</h1>
