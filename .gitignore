@@ -25,3 +25,4 @@ contracts/typechain-types
 backend/dist
 
 .DS_Store
+.claude/launch.json
