@@ -18,8 +18,17 @@ const MAX_FETCHED_BYTES = 12_000;
 
 export type DigestQuality = 'github-full' | 'http-fetched' | 'unreachable' | 'empty';
 
+export interface RepoInfo {
+  fullName: string;
+  url: string;
+  branch: string;
+  commit?: { sha: string; message: string; author: string; date: string; url: string };
+}
+
 export interface SubmissionDigest {
   digest: string;
+  /** Present when the deliverable was a readable GitHub repo. */
+  repo?: RepoInfo;
   isGithub: boolean;
   resolved: boolean;
   quality: DigestQuality;
@@ -125,6 +134,7 @@ export async function buildSubmissionDigest(submissionUrl: string): Promise<Subm
   if (repo) {
     const meta = await ghJson<{
       full_name: string;
+      html_url: string;
       description: string | null;
       language: string | null;
       default_branch: string;
@@ -163,7 +173,7 @@ export async function buildSubmissionDigest(submissionUrl: string): Promise<Subm
       ghJson<{ tree: { path: string; type: string }[]; truncated: boolean }>(
         `/repos/${repo.owner}/${repo.repo}/git/trees/${meta.default_branch}?recursive=1`,
       ),
-      ghJson<{ commit: { message: string; author: { date: string } } }[]>(
+      ghJson<{ sha: string; html_url: string; commit: { message: string; author: { name: string; date: string } } }[]>(
         `/repos/${repo.owner}/${repo.repo}/commits?per_page=15`,
       ),
     ]);
@@ -193,8 +203,27 @@ export async function buildSubmissionDigest(submissionUrl: string): Promise<Subm
       readmeText,
     ].join('\n');
 
+    const head = commits?.[0];
+    const repoInfo: RepoInfo = {
+      fullName: meta.full_name,
+      url: meta.html_url,
+      branch: meta.default_branch,
+      ...(head
+        ? {
+            commit: {
+              sha: head.sha,
+              message: head.commit.message.split('\n')[0].slice(0, 200),
+              author: head.commit.author.name,
+              date: head.commit.author.date,
+              url: head.html_url,
+            },
+          }
+        : {}),
+    };
+
     return {
       digest,
+      repo: repoInfo,
       isGithub: true,
       resolved: true,
       quality: 'github-full',
