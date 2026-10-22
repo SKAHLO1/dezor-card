@@ -82,7 +82,7 @@ function OnboardingForm() {
             key={r.id}
             onClick={() => setRole(r.id)}
             className={`card card-hover text-left ${
-              role === r.id ? 'border-accent ring-1 ring-accent/40' : ''
+              role === r.id ? 'border-ink ring-2 ring-accent' : ''
             }`}
           >
             <p className="font-semibold">{r.title}</p>
