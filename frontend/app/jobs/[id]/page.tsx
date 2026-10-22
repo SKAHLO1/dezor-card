@@ -1,16 +1,53 @@
 'use client';
 
-import { use, useCallback, useEffect, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useAccount } from 'wagmi';
 import { AppShell, Protected } from '@/components/AppShell';
-import { Badge, Button, Card, Field, Input, Textarea, Skeleton, Spinner } from '@/components/ui';
+import {
+  Avatar,
+  Badge,
+  Banner,
+  Button,
+  Card,
+  CardTitle,
+  CheckList,
+  Countdown,
+  Field,
+  Input,
+  Skeleton,
+  Spinner,
+  Stepper,
+  Tag,
+  Textarea,
+  type StepItem,
+} from '@/components/ui';
 import { Stars, RatingInput } from '@/components/Stars';
 import { useAuth } from '@/components/AuthProvider';
 import { useJob, useEscrowAction } from '@/lib/escrow';
-import { JobStatus, jobStatusLabel, jobStatusTone, FundingMode } from '@/lib/contracts';
-import { api, type JobMeta, type AiVerdict } from '@/lib/api';
+import { JobStatus, jobStatusLabel, jobStatusTone, FundingMode, escrowAddress } from '@/lib/contracts';
+import { api, type JobMeta, type AiVerdict, type JobEvent } from '@/lib/api';
 import { musd, btc, shortAddr, timeLeft, explorerAddr, explorerTx, isZeroAddr } from '@/lib/format';
+import { DEFAULT_BTC_PRICE_USD } from '@/lib/mezo/trove';
+import { formatEther } from 'viem';
+
+const EVENT_LABEL: Record<string, string> = {
+  JobPosted: 'Job posted & escrow funded',
+  JobClaimed: 'Claimed by a developer',
+  JobUnclaimed: 'Developer abandoned the job',
+  WorkSubmitted: 'Work submitted',
+  JobDisputed: 'Dispute opened',
+  DisputeResolved: 'AI arbiter recorded a verdict',
+  JobAppealed: 'Verdict appealed to admin',
+  AdminResolved: 'Admin made the final decision',
+  JobReleased: 'Payment released to developer',
+  JobRefunded: 'Escrow refunded to buyer',
+  JobCancelled: 'Job cancelled by buyer',
+  ReviewLeft: 'Buyer left a review',
+};
+
+const fmtDate = (ms: number) =>
+  new Date(ms).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function JobDetail({ id }: { id: string }) {
   const { profile } = useAuth();
@@ -20,6 +57,7 @@ function JobDetail({ id }: { id: string }) {
 
   const [meta, setMeta] = useState<JobMeta | null>(null);
   const [verdicts, setVerdicts] = useState<AiVerdict[]>([]);
+  const [events, setEvents] = useState<JobEvent[]>([]);
   const [submissionUrl, setSubmissionUrl] = useState('');
   const [reviewText, setReviewText] = useState('');
   const [rating, setRating] = useState(5);
@@ -37,6 +75,7 @@ function JobDetail({ id }: { id: string }) {
   const loadOffchain = useCallback(() => {
     api.get<JobMeta>(`/jobs/${id}`).then(setMeta).catch(() => setMeta(null));
     api.get<{ verdicts: AiVerdict[] }>(`/ai/verdicts/${id}`).then((r) => setVerdicts(r.verdicts)).catch(() => {});
+    api.get<{ events: JobEvent[] }>(`/jobs/${id}/events`).then((r) => setEvents(r.events)).catch(() => {});
   }, [id]);
 
   useEffect(loadOffchain, [loadOffchain]);
@@ -48,6 +87,7 @@ function JobDetail({ id }: { id: string }) {
   const status = (job?.status ?? JobStatus.None) as JobStatus;
   const submissionReview = verdicts.find((v) => v.layer === 'submission');
   const disputeVerdict = verdicts.find((v) => v.layer === 'dispute');
+  const repo = submissionReview?.repo ?? disputeVerdict?.repo;
 
   const refresh = () => {
     refetch();
@@ -161,9 +201,87 @@ function JobDetail({ id }: { id: string }) {
     }
   };
 
+  /* ---- derived view state ---- */
+  const hasFreelancer = job ? !isZeroAddr(job.freelancer) : false;
+  const submitted =
+    [JobStatus.Submitted, JobStatus.Disputed, JobStatus.DisputeResolved, JobStatus.Appealed, JobStatus.Released].includes(
+      status,
+    ) || (status === JobStatus.Refunded && !!meta?.submissionUrl);
+  const settled = [JobStatus.Released, JobStatus.Refunded, JobStatus.Cancelled].includes(status);
+
+  const steps: StepItem[] = useMemo(() => {
+    const aiDone = !!submissionReview;
+    return [
+      { label: 'Funded', note: job?.mode === FundingMode.BTC ? 'BTC collateral' : 'MUSD escrow', state: 'done' },
+      {
+        label: 'In progress',
+        note: hasFreelancer ? shortAddr(job?.freelancer) : status === JobStatus.Cancelled ? 'Cancelled' : 'Awaiting developer',
+        state: hasFreelancer ? 'done' : status === JobStatus.Open ? 'active' : 'todo',
+      },
+      {
+        label: 'Submitted',
+        note: meta?.submittedAt ? fmtDate(meta.submittedAt) : undefined,
+        state: submitted ? 'done' : status === JobStatus.Claimed ? 'active' : 'todo',
+      },
+      {
+        label: 'AI verification',
+        note: aiDone
+          ? `${submissionReview!.recommendation === 'complete' ? 'Complete' : 'Incomplete'} · ${Math.round(
+              (submissionReview!.confidence ?? 0) * 100,
+            )}%`
+          : aiBusy
+            ? 'In progress'
+            : undefined,
+        state: aiDone ? 'done' : submitted || aiBusy ? 'active' : 'todo',
+      },
+      {
+        label: 'Settlement',
+        note:
+          status === JobStatus.Released
+            ? 'Paid'
+            : status === JobStatus.Refunded
+              ? 'Refunded'
+              : status === JobStatus.Cancelled
+                ? 'Cancelled'
+                : status === JobStatus.DisputeResolved
+                  ? 'Appeal window'
+                  : status === JobStatus.Appealed
+                    ? 'Admin review'
+                    : status === JobStatus.Disputed
+                      ? 'AI arbitration'
+                      : undefined,
+        state: settled
+          ? 'done'
+          : [JobStatus.Disputed, JobStatus.DisputeResolved, JobStatus.Appealed].includes(status)
+            ? 'active'
+            : 'todo',
+      },
+    ];
+  }, [job, hasFreelancer, status, submitted, settled, submissionReview, aiBusy, meta?.submittedAt]);
+
+  const timeline = useMemo(() => {
+    const items: { at: number; label: string; tx?: string }[] = [];
+    if (events.length > 0) {
+      events.forEach((e) => items.push({ at: e.timestamp, label: EVENT_LABEL[e.name] ?? e.name, tx: e.txHash }));
+    } else {
+      if (meta?.createdAt) items.push({ at: meta.createdAt, label: EVENT_LABEL.JobPosted });
+      if (job && Number(job.claimedAt) > 0) items.push({ at: Number(job.claimedAt) * 1000, label: EVENT_LABEL.JobClaimed });
+      if (meta?.submittedAt) items.push({ at: meta.submittedAt, label: EVENT_LABEL.WorkSubmitted });
+    }
+    verdicts.forEach((v) => {
+      if (v.createdAt)
+        items.push({
+          at: v.createdAt,
+          label: v.layer === 'dispute' ? 'AI arbitration recorded' : 'AI verification completed',
+          tx: v.txHash,
+        });
+    });
+    return items.sort((a, b) => a.at - b.at);
+  }, [events, verdicts, meta, job]);
+
   if (isLoading || !job) {
     return (
-      <AppShell>
+      <AppShell wide>
         <Skeleton className="mb-4 h-8 w-2/3" />
         <Skeleton className="h-64" />
       </AppShell>
@@ -172,7 +290,7 @@ function JobDetail({ id }: { id: string }) {
 
   if (status === JobStatus.None) {
     return (
-      <AppShell>
+      <AppShell wide>
         <Card>
           <p className="font-semibold">Job #{id} not found</p>
           <p className="mt-1 text-sm text-muted">No on-chain job exists with that id.</p>
@@ -182,381 +300,622 @@ function JobDetail({ id }: { id: string }) {
   }
 
   const appealOpen = Number(job.appealDeadline) * 1000 > Date.now();
+  const btcAmount = Number(formatEther(job.btcCollateral));
+  const payoutEvent = [...events].reverse().find((e) => e.name === 'JobReleased' || e.name === 'JobRefunded');
 
   return (
-    <AppShell>
+    <AppShell wide>
+      <Link href="/feed" className="text-xs text-muted hover:text-fg">
+        ← Back to marketplace
+      </Link>
+
       {/* header */}
-      <div className="mb-1 flex items-center gap-3">
-        <span className="text-sm text-faint">Job #{id}</span>
-        <Badge tone={jobStatusTone[status]}>{jobStatusLabel[status]}</Badge>
-        {job.mode === FundingMode.BTC && <Badge tone="accent">BTC-backed</Badge>}
-      </div>
-      <h1 className="font-display text-2xl font-bold">{meta?.title ?? 'Untitled job'}</h1>
-
-      {/* facts */}
-      <div className="mt-4 grid gap-3 sm:grid-cols-3">
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wide text-faint">Escrow</p>
-          <p className="mt-1 font-semibold">{musd(job.amount)}</p>
-          {job.mode === FundingMode.BTC && (
-            <p className="text-xs text-muted">{btc(job.btcCollateral)} collateral</p>
-          )}
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wide text-faint">Deadline</p>
-          <p className="mt-1 font-semibold">{timeLeft(job.deadline)}</p>
-        </Card>
-        <Card className="p-4">
-          <p className="text-xs uppercase tracking-wide text-faint">Developer</p>
-          <p className="mt-1 font-semibold">
-            {isZeroAddr(job.freelancer) ? (
-              'Unclaimed'
-            ) : (
-              <Link href={`/profile/${job.freelancer}`} className="text-accent-soft hover:underline">
-                {shortAddr(job.freelancer)}
-              </Link>
-            )}
-          </p>
-        </Card>
-      </div>
-
-      {/* recovery — buyer owns the job on-chain but no metadata was saved off-chain */}
-      {isEmployer && !meta?.title && (
-        <Card className="mt-4 border-warning/40 bg-warning/5">
-          <p className="font-semibold">Finish setting up this job</p>
-          <p className="mt-1 text-sm text-muted">
-            Your funds are locked on-chain (Job #{id}), but no public title or description was saved.
-            Developers won&apos;t see this job in the feed until you add them — no new transaction needed.
-          </p>
-          <div className="mt-3 space-y-3">
-            <Field label="Title">
-              <Input
-                value={recoverTitle}
-                onChange={(e) => setRecoverTitle(e.target.value)}
-                placeholder="e.g. Build a Next.js landing page"
-              />
-            </Field>
-            <Field label="Description">
-              <Textarea
-                rows={4}
-                value={recoverDesc}
-                onChange={(e) => setRecoverDesc(e.target.value)}
-                placeholder="Scope, acceptance criteria, links…"
-              />
-            </Field>
-            <Field label="Tags" hint="Comma-separated.">
-              <Input
-                value={recoverTags}
-                onChange={(e) => setRecoverTags(e.target.value)}
-                placeholder="react, frontend, design"
-              />
-            </Field>
-            {recoverError && (
-              <p className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">
-                {recoverError}
-              </p>
-            )}
-            <Button
-              onClick={recoverMetadata}
-              disabled={recoverBusy || recoverTitle.trim().length < 3}
-              loading={recoverBusy}
-            >
-              Save job details
-            </Button>
+      <div className="mt-4 grid gap-6 lg:grid-cols-[1fr_20rem]">
+        <div>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {meta?.category && <Badge tone="accent">{meta.category}</Badge>}
+            <Badge tone={jobStatusTone[status]}>{jobStatusLabel[status]}</Badge>
+            {job.mode === FundingMode.BTC && <Badge tone="ink">BTC-backed</Badge>}
+            <span className="text-xs text-faint">Job #{id}</span>
           </div>
-        </Card>
-      )}
-
-      {/* description */}
-      <Card className="mt-4">
-        <p className="mb-2 text-xs uppercase tracking-wide text-faint">Brief</p>
-        <p className="whitespace-pre-wrap text-sm text-muted">
-          {meta?.description || 'No off-chain description was synced for this job.'}
-        </p>
-        {meta?.tags && meta.tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {meta.tags.map((t) => (
-              <span key={t} className="rounded-md bg-surface-2 px-2 py-0.5 text-xs text-muted">
-                {t}
-              </span>
-            ))}
+          <h1 className="font-display text-3xl font-bold leading-tight tracking-tight sm:text-4xl">
+            {meta?.title ?? 'Untitled job'}
+          </h1>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+            <a href={explorerAddr(job.employer)} target="_blank" className="flex items-center gap-1.5 hover:underline">
+              <Avatar seed={job.employer} size={20} />
+              {shortAddr(job.employer)}
+            </a>
+            {meta?.createdAt && <span>Posted {new Date(meta.createdAt).toLocaleDateString()}</span>}
+            <span>
+              Developer:{' '}
+              {hasFreelancer ? (
+                <Link href={`/profile/${job.freelancer}`} className="font-semibold text-fg hover:underline">
+                  {shortAddr(job.freelancer)}
+                </Link>
+              ) : (
+                'Unclaimed'
+              )}
+            </span>
           </div>
-        )}
-        <p className="mt-3 text-xs text-faint">
-          Posted by{' '}
-          <a href={explorerAddr(job.employer)} target="_blank" className="hover:underline">
-            {shortAddr(job.employer)}
-          </a>
-        </p>
+        </div>
+
+        <div className="card flex flex-col justify-between gap-3 p-5">
+          <div>
+            <p className="eyebrow">
+              {status === JobStatus.DisputeResolved
+                ? 'Appeal window closes in'
+                : settled
+                  ? 'Final status'
+                  : 'Time remaining'}
+            </p>
+            <p className="mt-1 font-display text-2xl font-bold">
+              {settled ? (
+                jobStatusLabel[status]
+              ) : status === JobStatus.DisputeResolved ? (
+                <Countdown to={job.appealDeadline} />
+              ) : status === JobStatus.Submitted || status === JobStatus.Disputed || status === JobStatus.Appealed ? (
+                'Under review'
+              ) : (
+                <Countdown to={job.deadline} />
+              )}
+            </p>
+            <p className="mt-0.5 text-xs text-muted">
+              {status === JobStatus.DisputeResolved
+                ? 'Either party can appeal to the admin before it ends.'
+                : `Deadline ${fmtDate(Number(job.deadline) * 1000)}`}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* stepper */}
+      <Card className="mt-6 overflow-x-auto">
+        <div className="min-w-[34rem]">
+          <Stepper steps={steps} />
+        </div>
       </Card>
 
-      {/* submission */}
-      {meta?.submissionUrl && (
-        <Card className="mt-4">
-          <p className="mb-1 text-xs uppercase tracking-wide text-faint">Deliverable</p>
-          <a
-            href={meta.submissionUrl}
-            target="_blank"
-            className="break-all text-sm text-accent-2 hover:underline"
-          >
-            {meta.submissionUrl}
-          </a>
-        </Card>
-      )}
-
-      {/* AI verdict panel */}
-      {(submissionReview || disputeVerdict || aiBusy) && (
-        <Card className="mt-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="text-xs uppercase tracking-wide text-faint">AI review</p>
-            {aiBusy && <Spinner />}
-          </div>
-          {disputeVerdict && <VerdictBlock label="Dispute arbitration" v={disputeVerdict} />}
-          {submissionReview && <VerdictBlock label="Submission review" v={submissionReview} />}
-          {!submissionReview && !disputeVerdict && aiBusy && (
-            <p className="text-sm text-muted">Gemini is scanning the deliverable…</p>
-          )}
-        </Card>
-      )}
-
-      {/* role-gated actions */}
-      <div className="mt-4 space-y-4">
-        {/* OPEN */}
-        {status === JobStatus.Open && (
-          <Card>
-            {isEmployer ? (
-              <ActionRow
-                title="This job is open"
-                body="No developer has claimed it yet. You can cancel and reclaim your escrow."
-                action={<Button variant="danger" onClick={cancel} loading={action.busy}>Cancel & refund</Button>}
-              />
-            ) : profile?.role === 'developer' ? (
-              <ActionRow
-                title="Claim this job"
-                body="Take the job, build the deliverable, and submit it for review."
-                action={<Button onClick={claim} loading={action.busy}>Claim job</Button>}
-              />
-            ) : (
-              <p className="text-sm text-muted">This job is open for developers to claim.</p>
-            )}
-          </Card>
-        )}
-
-        {/* CLAIMED */}
-        {status === JobStatus.Claimed && isFreelancer && (
-          <Card className="space-y-3">
-            <p className="font-semibold">Submit your deliverable</p>
-            <Field label="GitHub link or deliverable URL">
-              <Input
-                value={submissionUrl}
-                onChange={(e) => setSubmissionUrl(e.target.value)}
-                placeholder="https://github.com/you/project"
-              />
-            </Field>
-            <div className="flex gap-2">
-              <Button onClick={submitWork} disabled={!submissionUrl.trim()} loading={action.busy}>
-                Submit work
-              </Button>
-              <Button variant="ghost" onClick={unclaim} loading={action.busy}>
-                Abandon job
-              </Button>
-            </div>
-          </Card>
-        )}
-        {status === JobStatus.Claimed && !isFreelancer && (
-          <Card>
-            <p className="text-sm text-muted">
-              {isEmployer
-                ? 'A developer is working on this job. You’ll be able to review once they submit.'
-                : 'This job has been claimed and is in progress.'}
-            </p>
-            {isEmployer && timeLeft(job.deadline) === 'expired' && (
-              <Button variant="danger" className="mt-3" onClick={reclaim} loading={action.busy}>
-                Deadline passed — reclaim escrow
-              </Button>
-            )}
-          </Card>
-        )}
-
-        {/* SUBMITTED */}
-        {status === JobStatus.Submitted && isEmployer && (
-          <Card className="space-y-4">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_20rem]">
+        {/* main column */}
+        <div className="space-y-6">
+          {/* facts */}
+          <div className="panel-ink grid gap-6 p-5 sm:grid-cols-3">
             <div>
-              <p className="font-semibold">Review the submission</p>
-              <p className="text-sm text-muted">
-                Run the AI review for a recommendation, then release payment or open a dispute.
+              <p className="text-[11px] uppercase tracking-[0.12em] text-bg/60">BTC collateral</p>
+              <p className="mt-1 font-display text-2xl font-bold">
+                {job.mode === FundingMode.BTC ? btc(job.btcCollateral) : 'MUSD-funded'}
+              </p>
+              <p className="mt-1 text-xs text-bg/60">
+                {job.mode === FundingMode.BTC
+                  ? `≈ $${(btcAmount * DEFAULT_BTC_PRICE_USD).toLocaleString(undefined, { maximumFractionDigits: 0 })} est.`
+                  : 'No BTC locked for this job'}
               </p>
             </div>
-            {!submissionReview && meta?.submissionUrl && (
-              <Button variant="secondary" onClick={runAiReview} loading={aiBusy}>
-                Run AI review
-              </Button>
-            )}
-            <div className="border-t border-border pt-4">
-              <p className="mb-2 text-sm font-medium">Approve & release payment</p>
-              <RatingInput value={rating} onChange={setRating} />
-              <Textarea
-                rows={3}
-                className="mt-3"
-                value={reviewText}
-                onChange={(e) => setReviewText(e.target.value)}
-                placeholder="Leave a review for the developer…"
-              />
-              <div className="mt-3 flex gap-2">
-                <Button onClick={approveRelease} loading={action.busy}>
-                  Approve & pay {musd(job.amount)}
-                </Button>
-                <Button variant="danger" onClick={dispute} loading={action.busy}>
-                  Dispute
-                </Button>
-              </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.12em] text-bg/60">MUSD escrow</p>
+              <p className="mt-1 font-display text-2xl font-bold">{musd(job.amount)}</p>
+              <p className="mt-1 text-xs text-bg/60">Locked in the escrow contract</p>
             </div>
-          </Card>
-        )}
-        {status === JobStatus.Submitted && isFreelancer && (
-          <Card>
-            <ActionRow
-              title="Waiting on the buyer"
-              body="The buyer is reviewing your submission. If you believe it’s being held unfairly, you can open a dispute."
-              action={<Button variant="danger" onClick={dispute} loading={action.busy}>Open dispute</Button>}
-            />
-          </Card>
-        )}
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.12em] text-bg/60">Deadline</p>
+              <p className="mt-1 font-display text-2xl font-bold">{timeLeft(job.deadline)}</p>
+              <p className="mt-1 text-xs text-bg/60">{fmtDate(Number(job.deadline) * 1000)}</p>
+            </div>
+          </div>
 
-        {/* DISPUTED */}
-        {status === JobStatus.Disputed && (
-          <Card>
-            <ActionRow
-              title="In AI arbitration"
-              body="The dispute goes to the AI arbiter first. It re-evaluates the deliverable against the brief and records a verdict on-chain, opening a 3-day appeal window."
-              action={
-                isParty ? (
-                  <Button onClick={runArbitration} loading={aiBusy}>
-                    Run AI arbitration
-                  </Button>
-                ) : undefined
-              }
-            />
-          </Card>
-        )}
-
-        {/* DISPUTE RESOLVED — appeal window */}
-        {status === JobStatus.DisputeResolved && (
-          <Card className="space-y-3">
-            <p className="font-semibold">
-              AI verdict: {job.aiVerdictApprove ? 'release to developer' : 'refund the buyer'}
-            </p>
-            <p className="text-sm text-muted">
-              {appealOpen
-                ? `Appeal window closes ${timeLeft(job.appealDeadline)}. Either party can escalate to the human admin, or anyone can finalize the verdict once the window passes.`
-                : 'The appeal window has closed — the verdict can now be finalized by anyone.'}
-            </p>
-            {appealOpen && isParty && (
-              <div>
-                <Field label="Reason for appeal">
-                  <Textarea
-                    rows={2}
-                    value={appealReason}
-                    onChange={(e) => setAppealReason(e.target.value)}
-                    placeholder="Why the AI verdict should be reviewed by the admin…"
+          {/* recovery — buyer owns the job on-chain but no metadata was saved off-chain */}
+          {isEmployer && !meta?.title && (
+            <Card className="border-warning/40 bg-warning/10">
+              <p className="font-semibold">Finish setting up this job</p>
+              <p className="mt-1 text-sm text-muted">
+                Your funds are locked on-chain (Job #{id}), but no public title or description was saved.
+                Developers won&apos;t see this job in the feed until you add them — no new transaction needed.
+              </p>
+              <div className="mt-3 space-y-3">
+                <Field label="Title">
+                  <Input
+                    value={recoverTitle}
+                    onChange={(e) => setRecoverTitle(e.target.value)}
+                    placeholder="e.g. Build a Next.js landing page"
                   />
                 </Field>
-                <div className="mt-2 flex gap-2">
-                  <Button variant="danger" onClick={appeal} loading={action.busy}>
-                    Appeal to admin
-                  </Button>
-                  {!appealOpen && (
-                    <Button onClick={finalize} loading={action.busy}>
-                      Finalize verdict
-                    </Button>
-                  )}
+                <Field label="Description">
+                  <Textarea
+                    rows={4}
+                    value={recoverDesc}
+                    onChange={(e) => setRecoverDesc(e.target.value)}
+                    placeholder="Scope, acceptance criteria, links…"
+                  />
+                </Field>
+                <Field label="Tags" hint="Comma-separated.">
+                  <Input
+                    value={recoverTags}
+                    onChange={(e) => setRecoverTags(e.target.value)}
+                    placeholder="react, frontend, design"
+                  />
+                </Field>
+                {recoverError && (
+                  <p className="rounded-lg border border-danger/30 bg-danger/10 p-2.5 text-sm text-danger">
+                    {recoverError}
+                  </p>
+                )}
+                <Button
+                  onClick={recoverMetadata}
+                  disabled={recoverBusy || recoverTitle.trim().length < 3}
+                  loading={recoverBusy}
+                >
+                  Save job details
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {/* brief + requirements */}
+          <Card>
+            <CardTitle>Brief</CardTitle>
+            <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">
+              {meta?.description || 'No off-chain description was synced for this job.'}
+            </p>
+            {meta?.requirements && meta.requirements.length > 0 && (
+              <div className="mt-5">
+                <p className="eyebrow mb-2">Requirements</p>
+                <CheckList items={meta.requirements} />
+              </div>
+            )}
+            {meta?.tags && meta.tags.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {meta.tags.map((t) => (
+                  <Tag key={t}>{t}</Tag>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* submission details */}
+          {meta?.submissionUrl && (
+            <Card>
+              <CardTitle
+                aside={
+                  <a
+                    href={repo?.url ?? meta.submissionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs font-semibold hover:underline"
+                  >
+                    View on GitHub ↗
+                  </a>
+                }
+              >
+                Submission details
+              </CardTitle>
+              <dl className="grid gap-4 text-sm sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <dt className="eyebrow">Repository / deliverable</dt>
+                  <dd className="mt-1 break-all">
+                    <a href={meta.submissionUrl} target="_blank" rel="noreferrer" className="font-medium underline">
+                      {meta.submissionUrl}
+                    </a>
+                  </dd>
                 </div>
+                {repo && (
+                  <>
+                    <div>
+                      <dt className="eyebrow">Branch</dt>
+                      <dd className="mt-1 font-medium">{repo.branch}</dd>
+                    </div>
+                    {repo.commit && (
+                      <div>
+                        <dt className="eyebrow">Latest commit</dt>
+                        <dd className="mt-1">
+                          <a href={repo.commit.url} target="_blank" rel="noreferrer" className="font-mono text-xs font-semibold underline">
+                            {repo.commit.sha.slice(0, 7)}
+                          </a>{' '}
+                          <span className="text-muted">· {repo.commit.date.slice(0, 10)}</span>
+                          <p className="mt-0.5 line-clamp-2 text-xs text-muted">{repo.commit.message}</p>
+                        </dd>
+                      </div>
+                    )}
+                  </>
+                )}
+                {meta.submittedAt && (
+                  <div>
+                    <dt className="eyebrow">Submitted</dt>
+                    <dd className="mt-1 font-medium">{fmtDate(meta.submittedAt)}</dd>
+                  </div>
+                )}
+              </dl>
+            </Card>
+          )}
+
+          {/* AI verdict panel */}
+          {(submissionReview || disputeVerdict || aiBusy) && (
+            <Card>
+              <CardTitle
+                aside={
+                  aiBusy ? (
+                    <Spinner />
+                  ) : (
+                    <span className="rounded-full border border-border-strong px-2.5 py-0.5 text-[11px] text-muted">
+                      Powered by Google Gemini
+                    </span>
+                  )
+                }
+              >
+                AI verification results
+              </CardTitle>
+              {disputeVerdict && <VerdictBlock label="Dispute arbitration" v={disputeVerdict} />}
+              {submissionReview && <VerdictBlock label="Submission review" v={submissionReview} />}
+              {!submissionReview && !disputeVerdict && aiBusy && (
+                <p className="text-sm text-muted">Gemini is scanning the deliverable…</p>
+              )}
+            </Card>
+          )}
+
+          {/* role-gated actions */}
+          <div className="space-y-4">
+            {/* OPEN */}
+            {status === JobStatus.Open && (
+              <Card>
+                {isEmployer ? (
+                  <ActionRow
+                    title="This job is open"
+                    body="No developer has claimed it yet. You can cancel and reclaim your escrow."
+                    action={<Button variant="danger" onClick={cancel} loading={action.busy}>Cancel & refund</Button>}
+                  />
+                ) : profile?.role === 'developer' ? (
+                  <ActionRow
+                    title="Claim this job"
+                    body="Take the job, build the deliverable, and submit it for review."
+                    action={<Button onClick={claim} loading={action.busy}>Claim job</Button>}
+                  />
+                ) : (
+                  <p className="text-sm text-muted">This job is open for developers to claim.</p>
+                )}
+              </Card>
+            )}
+
+            {/* CLAIMED */}
+            {status === JobStatus.Claimed && isFreelancer && (
+              <Card className="space-y-3">
+                <p className="font-display text-lg font-bold">Submit your deliverable</p>
+                <Field label="GitHub link or deliverable URL">
+                  <Input
+                    value={submissionUrl}
+                    onChange={(e) => setSubmissionUrl(e.target.value)}
+                    placeholder="https://github.com/you/project"
+                  />
+                </Field>
+                <div className="flex gap-2">
+                  <Button onClick={submitWork} disabled={!submissionUrl.trim()} loading={action.busy}>
+                    Submit work
+                  </Button>
+                  <Button variant="ghost" onClick={unclaim} loading={action.busy}>
+                    Abandon job
+                  </Button>
+                </div>
+              </Card>
+            )}
+            {status === JobStatus.Claimed && !isFreelancer && (
+              <Card>
+                <p className="text-sm text-muted">
+                  {isEmployer
+                    ? 'A developer is working on this job. You’ll be able to review once they submit.'
+                    : 'This job has been claimed and is in progress.'}
+                </p>
+                {isEmployer && timeLeft(job.deadline) === 'expired' && (
+                  <Button variant="danger" className="mt-3" onClick={reclaim} loading={action.busy}>
+                    Deadline passed — reclaim escrow
+                  </Button>
+                )}
+              </Card>
+            )}
+
+            {/* SUBMITTED */}
+            {status === JobStatus.Submitted && isEmployer && (
+              <Card className="space-y-4">
+                <div>
+                  <p className="font-display text-lg font-bold">Review the submission</p>
+                  <p className="text-sm text-muted">
+                    Run the AI review for a recommendation, then release payment or open a dispute.
+                  </p>
+                </div>
+                {!submissionReview && meta?.submissionUrl && (
+                  <Button variant="secondary" onClick={runAiReview} loading={aiBusy}>
+                    Run AI review
+                  </Button>
+                )}
+                <div className="border-t border-border pt-4">
+                  <p className="mb-2 text-sm font-medium">Approve & release payment</p>
+                  <RatingInput value={rating} onChange={setRating} />
+                  <Textarea
+                    rows={3}
+                    className="mt-3"
+                    value={reviewText}
+                    onChange={(e) => setReviewText(e.target.value)}
+                    placeholder="Leave a review for the developer…"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button onClick={approveRelease} loading={action.busy}>
+                      Approve & pay {musd(job.amount)}
+                    </Button>
+                    <Button variant="danger" onClick={dispute} loading={action.busy}>
+                      Dispute
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )}
+            {status === JobStatus.Submitted && isFreelancer && (
+              <Card>
+                <ActionRow
+                  title="Waiting on the buyer"
+                  body="The buyer is reviewing your submission. If you believe it’s being held unfairly, you can open a dispute."
+                  action={<Button variant="danger" onClick={dispute} loading={action.busy}>Open dispute</Button>}
+                />
+              </Card>
+            )}
+            {status === JobStatus.Submitted && !isParty && (
+              <Card>
+                <p className="text-sm text-muted">The buyer is reviewing this submission.</p>
+              </Card>
+            )}
+
+            {/* DISPUTED */}
+            {status === JobStatus.Disputed && (
+              <Card>
+                <ActionRow
+                  title="In AI arbitration"
+                  body="The dispute goes to the AI arbiter first. It re-evaluates the deliverable against the brief and records a verdict on-chain, opening a 3-day appeal window."
+                  action={
+                    isParty ? (
+                      <Button onClick={runArbitration} loading={aiBusy}>
+                        Run AI arbitration
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              </Card>
+            )}
+
+            {/* DISPUTE RESOLVED — appeal window */}
+            {status === JobStatus.DisputeResolved && (
+              <div className="space-y-3">
+                <Banner
+                  tone="danger"
+                  title={`AI verdict: ${job.aiVerdictApprove ? 'release to developer' : 'refund the buyer'}`}
+                  action={
+                    !appealOpen ? (
+                      <Button onClick={finalize} loading={action.busy}>
+                        Finalize verdict
+                      </Button>
+                    ) : undefined
+                  }
+                >
+                  {appealOpen ? (
+                    <>
+                      You can request a human review if you disagree. Appeal window closes in{' '}
+                      <strong className="text-fg">
+                        <Countdown to={job.appealDeadline} />
+                      </strong>
+                      ; after that anyone can finalize the verdict.
+                    </>
+                  ) : (
+                    'The appeal window has closed — the verdict can now be finalized by anyone.'
+                  )}
+                </Banner>
+                {appealOpen && isParty && (
+                  <Card>
+                    <Field label="Reason for appeal">
+                      <Textarea
+                        rows={2}
+                        value={appealReason}
+                        onChange={(e) => setAppealReason(e.target.value)}
+                        placeholder="Why the AI verdict should be reviewed by the admin…"
+                      />
+                    </Field>
+                    <Button variant="danger" className="mt-3" onClick={appeal} loading={action.busy}>
+                      Request appeal
+                    </Button>
+                  </Card>
+                )}
               </div>
             )}
-            {!appealOpen && (
-              <Button onClick={finalize} loading={action.busy}>
-                Finalize verdict
-              </Button>
+
+            {/* APPEALED */}
+            {status === JobStatus.Appealed && (
+              <Banner tone="warning" title="Escalated to the admin">
+                A human admin is reviewing this dispute and will make the final, binding decision.
+              </Banner>
+            )}
+
+            {/* TERMINAL */}
+            {settled && (
+              <Banner
+                tone={status === JobStatus.Released ? 'success' : 'info'}
+                title={
+                  status === JobStatus.Released
+                    ? 'Payment released to the developer.'
+                    : status === JobStatus.Refunded
+                      ? 'Escrow refunded to the buyer.'
+                      : 'Job cancelled — escrow refunded to the buyer.'
+                }
+              >
+                {status === JobStatus.Released && job.rating > 0 && (
+                  <span className="flex items-center gap-2">
+                    Buyer rating: <Stars value={job.rating} />
+                  </span>
+                )}
+              </Banner>
+            )}
+
+            {action.txHash && (
+              <p className="text-xs text-faint">
+                Last tx:{' '}
+                <a href={explorerTx(action.txHash)} target="_blank" className="hover:underline">
+                  {shortAddr(action.txHash)}
+                </a>
+              </p>
+            )}
+            {(notice || action.error) && (
+              <p className="text-sm text-muted">{action.error ? `Error: ${action.error}` : notice}</p>
+            )}
+          </div>
+        </div>
+
+        {/* sidebar */}
+        <aside className="space-y-6">
+          <Card>
+            <CardTitle>Timeline</CardTitle>
+            {timeline.length === 0 ? (
+              <p className="text-sm text-muted">No activity recorded yet.</p>
+            ) : (
+              <ol className="relative space-y-4 border-l border-border-strong pl-4">
+                {timeline.map((t, i) => (
+                  <li key={`${t.at}-${i}`} className="relative">
+                    <span className="absolute -left-[1.4rem] top-1 h-2.5 w-2.5 rounded-full bg-ink ring-4 ring-surface" />
+                    <p className="text-sm font-medium">{t.label}</p>
+                    <p className="text-xs text-muted">
+                      {fmtDate(t.at)}
+                      {t.tx && (
+                        <>
+                          {' · '}
+                          <a href={explorerTx(t.tx)} target="_blank" rel="noreferrer" className="underline">
+                            tx
+                          </a>
+                        </>
+                      )}
+                    </p>
+                  </li>
+                ))}
+              </ol>
             )}
           </Card>
-        )}
 
-        {/* APPEALED */}
-        {status === JobStatus.Appealed && (
           <Card>
-            <p className="font-semibold">Escalated to the admin</p>
+            <CardTitle>Payout status</CardTitle>
+            <p className="font-display text-2xl font-bold">{musd(job.amount)}</p>
             <p className="mt-1 text-sm text-muted">
-              A human admin is reviewing this dispute and will make the final, binding decision.
-            </p>
-          </Card>
-        )}
-
-        {/* TERMINAL */}
-        {(status === JobStatus.Released ||
-          status === JobStatus.Refunded ||
-          status === JobStatus.Cancelled) && (
-          <Card>
-            <p className="font-semibold">
               {status === JobStatus.Released
-                ? `Payment released to the developer${job.rating ? '' : ''}.`
+                ? `Paid to ${shortAddr(job.freelancer)}.`
                 : status === JobStatus.Refunded
-                  ? 'Escrow refunded to the buyer.'
-                  : 'Job cancelled — escrow refunded to the buyer.'}
+                  ? `Refunded to ${shortAddr(job.employer)}.`
+                  : status === JobStatus.Cancelled
+                    ? 'Returned to the buyer.'
+                    : 'Held in escrow. Released when the buyer approves, or when a dispute settlement is final.'}
             </p>
-            {status === JobStatus.Released && job.rating > 0 && (
-              <div className="mt-2 flex items-center gap-2 text-sm text-muted">
-                Buyer rating: <Stars value={job.rating} />
-              </div>
+            {payoutEvent && (
+              <a href={explorerTx(payoutEvent.txHash)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold underline">
+                View settlement tx ↗
+              </a>
             )}
           </Card>
-        )}
 
-        {action.txHash && (
-          <p className="text-xs text-faint">
-            Last tx:{' '}
-            <a href={explorerTx(action.txHash)} target="_blank" className="hover:underline">
-              {shortAddr(action.txHash)}
+          {job.mode === FundingMode.BTC && (
+            <Card>
+              <CardTitle>Powered by Mezo</CardTitle>
+              <p className="text-sm text-muted">
+                The buyer locked BTC in a Mezo Trove and minted MUSD to fund this job — keeping their
+                Bitcoin exposure while paying in a stable asset.
+              </p>
+            </Card>
+          )}
+
+          <Card>
+            <CardTitle>Secure &amp; transparent</CardTitle>
+            <p className="text-sm text-muted">
+              Funds are held by the escrow smart contract and move only on a final settlement.
+            </p>
+            <a href={explorerAddr(escrowAddress)} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold underline">
+              View escrow contract ↗
             </a>
-          </p>
-        )}
-        {(notice || action.error) && (
-          <p className="text-sm text-muted">{action.error ? `Error: ${action.error}` : notice}</p>
-        )}
+          </Card>
+        </aside>
       </div>
     </AppShell>
   );
 }
 
+const CHECK_STYLE = {
+  met: { label: 'Verified', tone: 'success' as const },
+  partial: { label: 'Partial', tone: 'warning' as const },
+  missing: { label: 'Missing', tone: 'danger' as const },
+};
+
 function VerdictBlock({ label, v }: { label: string; v: AiVerdict }) {
   const good = v.recommendation === 'complete';
   const unreliable = v.quality === 'unreachable' || v.quality === 'empty' || (v.contentBytes ?? 0) === 0;
+  const pct = Math.round((v.confidence ?? 0) * 100);
   return (
-    <div className="mb-3 rounded-lg border border-border bg-bg-elevated p-3 last:mb-0">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-faint">{label}</span>
-        <Badge tone={good ? 'success' : 'danger'}>
-          {good ? 'Recommends complete' : 'Recommends incomplete'}
-        </Badge>
+    <div className="mb-4 rounded-xl border border-border bg-bg-elevated p-4 last:mb-0">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span
+            className={`flex h-10 w-10 items-center justify-center rounded-full text-lg font-bold text-white ${
+              good ? 'bg-success' : 'bg-danger'
+            }`}
+          >
+            {good ? '✓' : '✕'}
+          </span>
+          <div>
+            <p className="eyebrow">{label}</p>
+            <p className="font-display text-lg font-bold">
+              {good ? 'Requirements satisfied' : 'Requirements not satisfied'}
+            </p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="eyebrow">Confidence</p>
+          <p className="font-display text-2xl font-bold">{pct}%</p>
+        </div>
       </div>
-      <p className="mt-2 text-sm text-muted">{v.rationale}</p>
-      <p className="mt-1.5 text-xs text-faint">
-        Confidence {Math.round((v.confidence ?? 0) * 100)}%
+
+      <p className="mt-3 text-sm text-muted">{v.rationale}</p>
+
+      {v.checks && v.checks.length > 0 && (
+        <div className="mt-4 overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[28rem] text-left text-sm">
+            <thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th className="px-3 py-2 font-semibold">Requirement</th>
+                <th className="px-3 py-2 font-semibold">Evidence</th>
+                <th className="px-3 py-2 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {v.checks.map((c, i) => (
+                <tr key={i} className="border-t border-border align-top">
+                  <td className="px-3 py-2">{c.requirement}</td>
+                  <td className="px-3 py-2 text-xs text-muted">{c.evidence}</td>
+                  <td className="px-3 py-2">
+                    <Badge tone={CHECK_STYLE[c.status].tone}>{CHECK_STYLE[c.status].label}</Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="mt-3 text-xs text-faint">
         {v.txHash && (
           <>
-            {' · '}
-            <a href={explorerTx(v.txHash)} target="_blank" className="hover:underline">
+            <a href={explorerTx(v.txHash)} target="_blank" className="underline">
               on-chain verdict
             </a>
+            {' · '}
           </>
         )}
-        {v.escalated && ' · escalated to admin'}
+        {v.escalated && 'escalated to admin · '}
+        AI advice only — the buyer decides.
       </p>
+
       {(v.digestNote || v.quality) && (
         <div
           className={`mt-2 rounded-md border p-2 text-xs ${
             unreliable
               ? 'border-warning/40 bg-warning/10 text-warning'
-              : 'border-border bg-surface-2 text-faint'
+              : 'border-border bg-surface-2 text-muted'
           }`}
         >
           <span className="font-medium">
@@ -582,7 +941,7 @@ function ActionRow({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <p className="font-semibold">{title}</p>
+        <p className="font-display text-lg font-bold">{title}</p>
         <p className="max-w-md text-sm text-muted">{body}</p>
       </div>
       {action}
