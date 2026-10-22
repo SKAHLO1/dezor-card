@@ -15,11 +15,14 @@ import { env } from './env';
  */
 
 const REORG_REWIND = 50n;
+/** Max blocks per eth_getLogs call (inclusive span); the Mezo RPC caps it at 10,000. */
+const MAX_LOG_RANGE = 9_000n;
 const POLL_INTERVAL_MS = 10_000;
 const META_DOC = 'meta/indexer';
 
 type LogLike = {
   blockNumber: bigint;
+  logIndex?: number;
   transactionHash: `0x${string}`;
   args: Record<string, unknown>;
   eventName?: string;
@@ -96,10 +99,47 @@ async function getSubmissionUrl(jobId: string): Promise<string | null> {
   }
 }
 
+const blockTimes = new Map<bigint, number>();
+
+async function blockTimestampMs(blockNumber: bigint): Promise<number> {
+  const cached = blockTimes.get(blockNumber);
+  if (cached) return cached;
+  const block = await publicClient.getBlock({ blockNumber });
+  const ms = Number(block.timestamp) * 1000;
+  if (blockTimes.size > 500) blockTimes.clear();
+  blockTimes.set(blockNumber, ms);
+  return ms;
+}
+
+/** One doc per on-chain log (id = txHash-logIndex) so re-scans after a restart are idempotent. */
+async function recordEvent(jobId: string, log: LogLike) {
+  if (!firebaseEnabled || !log.eventName) return;
+  try {
+    const by = (log.args.by ?? log.args.freelancer ?? log.args.employer) as string | undefined;
+    await getDb()
+      .collection('jobs')
+      .doc(jobId)
+      .collection('events')
+      .doc(`${log.transactionHash}-${log.logIndex ?? 0}`)
+      .set({
+        name: log.eventName,
+        txHash: log.transactionHash,
+        blockNumber: Number(log.blockNumber),
+        logIndex: log.logIndex ?? 0,
+        timestamp: await blockTimestampMs(log.blockNumber),
+        ...(by ? { by } : {}),
+      });
+  } catch (err) {
+    console.error(`indexer: failed to record event for job ${jobId}:`, err);
+  }
+}
+
 async function handleEvent(log: LogLike) {
   const id = log.args.id as bigint | undefined;
   const jobId = id !== undefined ? id.toString() : undefined;
   if (jobId === undefined) return;
+
+  await recordEvent(jobId, log);
 
   // Project the up-to-date on-chain snapshot for every lifecycle event.
   await projectJobToFirestore(jobId);
@@ -162,8 +202,13 @@ async function tick() {
   const head = await publicClient.getBlockNumber();
   const from = cursor > REORG_REWIND ? cursor - REORG_REWIND : 0n;
   if (head < from) return;
-  await scanRange(from, head);
-  await saveCursor(head);
+  // The Mezo RPC rejects eth_getLogs spans over 10k blocks, so walk the range in windows and
+  // persist the cursor after each one — a long catch-up survives restarts without rescanning.
+  for (let start = from; start <= head; start += MAX_LOG_RANGE) {
+    const end = start + MAX_LOG_RANGE - 1n < head ? start + MAX_LOG_RANGE - 1n : head;
+    await scanRange(start, end);
+    await saveCursor(end);
+  }
 }
 
 async function main() {
