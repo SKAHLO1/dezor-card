@@ -79,6 +79,32 @@ usersRouter.get('/users/me', requireAuth, async (req, res) => {
   }
 });
 
+/** Public developer directory. Only public fields are returned (never email / uid). */
+usersRouter.get('/users', async (req, res) => {
+  if (!firebaseEnabled) return res.json({ users: [] });
+  try {
+    const role = req.query.role === 'buyer' ? 'buyer' : 'developer';
+    const snap = await getDb().collection('users').where('role', '==', role).limit(200).get();
+    const users = snap.docs.map((d) => {
+      const u = d.data();
+      return {
+        id: d.id,
+        role: u.role,
+        walletAddress: u.walletAddress,
+        displayName: u.displayName ?? '',
+        bio: u.bio ?? '',
+        skills: u.skills ?? [],
+        avgRating: u.avgRating ?? 0,
+        ratingCount: u.ratingCount ?? 0,
+        jobCount: u.jobCount ?? 0,
+      };
+    });
+    return res.json({ users });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 /** Public profile lookup by wallet address — powers developer profile pages. */
 usersRouter.get('/users/:address', async (req, res) => {
   if (!firebaseEnabled) return res.status(404).json({ error: 'not found' });
@@ -87,7 +113,8 @@ usersRouter.get('/users/:address', async (req, res) => {
     const db = getDb();
     const snap = await db.collection('users').where('walletAddress', '==', wallet).limit(1).get();
     if (snap.empty) return res.status(404).json({ error: 'user not found' });
-    const user = { id: snap.docs[0].id, ...snap.docs[0].data() };
+    const { email: _email, uid: _uid, ...publicFields } = snap.docs[0].data();
+    const user = { id: snap.docs[0].id, ...publicFields };
 
     const reviewsSnap = await db.collection('reviews').where('toWallet', '==', wallet).get();
     const reviews = reviewsSnap.docs
