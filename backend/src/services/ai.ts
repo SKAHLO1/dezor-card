@@ -1,6 +1,6 @@
 import { escrowAbi, escrowAddress, publicClient, arbiterWallet, Status } from '../chain';
 import { getVerdict, type Verdict } from '../arbiter';
-import { buildSubmissionDigest, type DigestQuality } from '../github';
+import { buildSubmissionDigest, type DigestQuality, type RepoInfo } from '../github';
 import { getDb, firebaseEnabled } from '../firebase';
 import { env } from '../env';
 
@@ -16,6 +16,7 @@ interface DigestMeta {
   quality: DigestQuality;
   contentBytes: number;
   digestNote: string;
+  repo?: RepoInfo;
 }
 
 export interface SubmissionReview extends Verdict, DigestMeta {
@@ -63,7 +64,11 @@ async function resolveJobSpec(jobId: string, detailsURI: string): Promise<string
     const data = snap.data()!;
     const parts: string[] = [];
     if (data.title) parts.push(`Title: ${data.title}`);
+    if (data.category) parts.push(`Category: ${data.category}`);
     if (data.description) parts.push(`Description:\n${data.description}`);
+    if (Array.isArray(data.requirements) && data.requirements.length) {
+      parts.push(`Requirements:\n${data.requirements.map((r: string, i: number) => `${i + 1}. ${r}`).join('\n')}`);
+    }
     if (Array.isArray(data.tags) && data.tags.length) parts.push(`Tags: ${data.tags.join(', ')}`);
     if (data.budgetMusd) parts.push(`Budget: ${data.budgetMusd} MUSD`);
     if (data.fundingMode) parts.push(`Funding mode: ${data.fundingMode}`);
@@ -86,12 +91,12 @@ export async function reviewSubmission(
     functionName: 'getJob',
     args: [BigInt(jobId)],
   });
-  const [{ digest, isGithub, resolved, quality, contentBytes, note }, spec] = await Promise.all([
+  const [{ digest, isGithub, resolved, quality, contentBytes, note, repo }, spec] = await Promise.all([
     buildSubmissionDigest(submissionUrl),
     resolveJobSpec(jobId, job.detailsURI),
   ]);
   const verdict = await getVerdict(spec, digest, 'submission');
-  const meta: DigestMeta = { isGithub, resolved, quality, contentBytes, digestNote: note };
+  const meta: DigestMeta = { isGithub, resolved, quality, contentBytes, digestNote: note, ...(repo ? { repo } : {}) };
   await recordVerdict(jobId, 'submission', { ...verdict, submissionUrl, ...meta });
   return { jobId, submissionUrl, ...verdict, ...meta };
 }
@@ -110,13 +115,13 @@ export async function arbitrateDispute(
     throw new Error(`job ${jobId} is not in the Disputed state (status ${job.status})`);
   }
 
-  const [{ digest, isGithub, resolved, quality, contentBytes, note }, spec] = await Promise.all([
+  const [{ digest, isGithub, resolved, quality, contentBytes, note, repo }, spec] = await Promise.all([
     buildSubmissionDigest(submissionUrl),
     resolveJobSpec(jobId, job.detailsURI),
   ]);
   const verdict = await getVerdict(spec, digest, 'dispute');
   const approve = verdict.recommendation === 'complete';
-  const meta: DigestMeta = { isGithub, resolved, quality, contentBytes, digestNote: note };
+  const meta: DigestMeta = { isGithub, resolved, quality, contentBytes, digestNote: note, ...(repo ? { repo } : {}) };
 
   // Confidence floor — escalate to the admin queue instead of writing on-chain.
   if (verdict.confidence < env.arbiter.autoResolveMinConfidence) {
