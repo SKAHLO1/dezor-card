@@ -53,7 +53,8 @@ function Feed() {
     <AppShell wide>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-2xl font-bold">Job feed</h1>
+          <p className="eyebrow">Marketplace</p>
+          <h1 className="mt-1 font-display text-4xl font-bold tracking-tight">Job feed</h1>
           <p className="mt-1 text-sm text-muted">
             {profile?.role === 'developer'
               ? 'Browse open jobs, claim one, and get paid in MUSD when the work lands.'
@@ -89,7 +90,7 @@ function Feed() {
             type="checkbox"
             checked={onlyOpen}
             onChange={(e) => setOnlyOpen(e.target.checked)}
-            className="accent-[var(--color-accent)]"
+            className="accent-[var(--color-ink)]"
           />
           Open only
         </label>
