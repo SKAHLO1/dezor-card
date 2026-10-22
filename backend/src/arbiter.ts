@@ -8,6 +8,15 @@ export interface Verdict {
   confidence: number;
   /** 2-4 sentences explaining the decision, shown to both parties. */
   rationale: string;
+  /** One finding per requirement listed in the spec (empty when the buyer listed none). */
+  checks: RequirementCheck[];
+}
+
+export interface RequirementCheck {
+  requirement: string;
+  status: 'met' | 'partial' | 'missing';
+  /** Concrete evidence from the submission — file path, line, commit, or what was absent. */
+  evidence: string;
 }
 
 const SYSTEM_PROMPT = `You are the AI arbiter for TrustieWork, a Bitcoin-native developer-services
@@ -22,7 +31,14 @@ judge the actual work on its merits.
 
 Respond with a strict JSON object only, no prose, no markdown fences:
 {"recommendation": "complete" | "incomplete", "confidence": number between 0 and 1,
- "rationale": "2-4 sentences explaining the decision"}
+ "rationale": "2-4 sentences explaining the decision",
+ "checks": [{"requirement": "<requirement text copied from the spec>",
+             "status": "met" | "partial" | "missing",
+             "evidence": "one short sentence citing a file path, commit or the absence of one"}]}
+
+If the spec contains a "Requirements:" list, "checks" must contain exactly one entry per listed
+requirement, in the same order, judged only from the material provided (never assume a file
+exists that is not in the digest). If there is no Requirements list, return "checks": [].
 
 Recommend "complete" only if the submission substantively meets the spec. If it is partial,
 off-scope, or unverifiable from the material provided, recommend "incomplete". Set confidence
@@ -34,7 +50,7 @@ const MAX_FIELD_BYTES = 12_000;
 const ai = env.gemini.apiKey ? new GoogleGenAI({ apiKey: env.gemini.apiKey }) : null;
 
 function fallbackVerdict(reason: string): Verdict {
-  return { recommendation: 'incomplete', confidence: 0, rationale: reason };
+  return { recommendation: 'incomplete', confidence: 0, rationale: reason, checks: [] };
 }
 
 function truncate(text: string, max: number): string {
@@ -53,7 +69,15 @@ function parseVerdict(text: string): Verdict {
   const recommendation = parsed.recommendation === 'complete' ? 'complete' : 'incomplete';
   const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
   const rationale = String(parsed.rationale ?? '').trim().slice(0, 2000) || 'No rationale provided.';
-  return { recommendation, confidence, rationale };
+  const checks: RequirementCheck[] = (Array.isArray(parsed.checks) ? parsed.checks : [])
+    .slice(0, 12)
+    .map((c) => ({
+      requirement: String(c?.requirement ?? '').trim().slice(0, 200),
+      status: (c?.status === 'met' || c?.status === 'partial' ? c.status : 'missing') as RequirementCheck['status'],
+      evidence: String(c?.evidence ?? '').trim().slice(0, 300) || 'No evidence provided.',
+    }))
+    .filter((c) => c.requirement);
+  return { recommendation, confidence, rationale, checks };
 }
 
 async function callGemini(model: string, jobSpec: string, submission: string): Promise<Verdict> {
