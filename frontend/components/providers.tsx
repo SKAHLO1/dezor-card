@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import { RainbowKitProvider, darkTheme } from '@rainbow-me/rainbowkit';
+import { RainbowKitProvider, lightTheme } from '@rainbow-me/rainbowkit';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
 import '@rainbow-me/rainbowkit/styles.css';
@@ -22,10 +22,10 @@ export function Providers({ children }: { children: ReactNode }) {
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider
           initialChain={mezoMatsnet}
-          theme={darkTheme({
-            accentColor: '#7c5cff',
-            accentColorForeground: '#07070b',
-            borderRadius: 'large',
+          theme={lightTheme({
+            accentColor: '#d5f43b',
+            accentColorForeground: '#10120d',
+            borderRadius: 'medium',
             overlayBlur: 'small',
           })}
         >
