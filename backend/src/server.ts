@@ -11,6 +11,7 @@ import { usersRouter } from './routes/users';
 import { reviewsRouter } from './routes/reviews';
 import { appealsRouter } from './routes/appeals';
 import { authRouter } from './routes/auth';
+import { statsRouter } from './routes/stats';
 
 const app = express();
 
@@ -42,6 +43,7 @@ app.use(authRouter);
 app.use('/ai', aiLimiter);
 app.use(aiRouter);
 app.use(jobsRouter);
+app.use(statsRouter);
 app.use(usersRouter);
 app.use(reviewsRouter);
 app.use(appealsRouter);
