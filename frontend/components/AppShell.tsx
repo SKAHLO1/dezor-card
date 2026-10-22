@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { Nav } from '@/components/Nav';
+import { Footer } from '@/components/Footer';
 import { Spinner } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 
@@ -11,7 +12,8 @@ export function AppShell({ children, wide }: { children: ReactNode; wide?: boole
   return (
     <div className="min-h-screen">
       <Nav />
-      <main className={`mx-auto px-6 py-10 ${wide ? 'max-w-6xl' : 'max-w-3xl'}`}>{children}</main>
+      <main className={`mx-auto px-5 py-10 sm:px-6 ${wide ? 'max-w-6xl' : 'max-w-3xl'}`}>{children}</main>
+      <Footer />
     </div>
   );
 }
