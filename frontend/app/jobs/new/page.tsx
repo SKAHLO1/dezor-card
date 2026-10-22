@@ -15,6 +15,17 @@ import { quoteTrove, DEFAULT_BTC_PRICE_USD } from '@/lib/mezo/trove';
 
 type Mode = 'MUSD' | 'BTC';
 
+const CATEGORIES = [
+  'Web Development',
+  'Backend',
+  'Mobile',
+  'Smart Contracts',
+  'Design',
+  'Data & AI',
+  'DevOps',
+  'Other',
+];
+
 function NewJob() {
   const router = useRouter();
   const { profile } = useAuth();
@@ -39,6 +50,8 @@ function NewJob() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [tags, setTags] = useState('');
+  const [category, setCategory] = useState(CATEGORIES[0]);
+  const [requirements, setRequirements] = useState('');
   const [budget, setBudget] = useState('500');
   const [btcCollateral, setBtcCollateral] = useState('0.05');
   const [btcPrice, setBtcPrice] = useState(String(DEFAULT_BTC_PRICE_USD));
@@ -125,6 +138,8 @@ function NewJob() {
           title: title.trim(),
           description: description.trim(),
           tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+          category,
+          requirements: requirements.split('\n').map((r) => r.trim()).filter(Boolean),
           budgetMusd: budget,
           fundingMode: mode,
           deadline: Number(deadline),
@@ -163,7 +178,7 @@ function NewJob() {
 
   return (
     <AppShell>
-      <h1 className="font-display text-2xl font-bold">Post a job</h1>
+      <h1 className="font-display text-4xl font-bold tracking-tight">Post a job</h1>
       <p className="mt-1 mb-6 text-sm text-muted">
         Funds lock in the TrustieWork escrow contract until the work is accepted or arbitrated.
       </p>
@@ -186,9 +201,31 @@ function NewJob() {
             placeholder="Scope, acceptance criteria, links, anything the developer (and the AI reviewer) needs."
           />
         </Field>
-        <Field label="Tags" hint="Comma-separated.">
-          <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="react, frontend, design" />
+        <Field
+          label="Requirements"
+          hint="One per line. The AI reviewer checks the deliverable against each of these and reports evidence."
+        >
+          <Textarea
+            rows={4}
+            value={requirements}
+            onChange={(e) => setRequirements(e.target.value)}
+            placeholder={'Responsive design (mobile + desktop)\nNext.js + TypeScript + Tailwind CSS\nFast performance (Lighthouse 90+)'}
+          />
         </Field>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Category">
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className="input">
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Tags" hint="Comma-separated.">
+            <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="react, frontend, design" />
+          </Field>
+        </div>
 
         {/* funding mode */}
         <div>
@@ -202,8 +239,8 @@ function NewJob() {
                 onClick={() => setMode(m)}
                 className={`flex-1 rounded-lg border px-3 py-2.5 text-sm font-semibold transition ${
                   mode === m
-                    ? 'border-accent bg-accent/15 text-accent-soft'
-                    : 'border-border text-muted hover:border-border-strong'
+                    ? 'border-ink bg-accent text-ink'
+                    : 'border-border-strong text-muted hover:border-ink'
                 }`}
               >
                 {m === 'MUSD' ? 'Fund with MUSD' : 'Lock BTC collateral'}
