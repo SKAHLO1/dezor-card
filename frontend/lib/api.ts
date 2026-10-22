@@ -66,12 +66,17 @@ export interface JobMeta {
   title: string;
   description: string;
   tags: string[];
+  /** Optional marketplace category, e.g. "Web Development". */
+  category?: string;
+  /** Acceptance criteria the buyer wants verified — one per line in the post form. */
+  requirements?: string[];
   budgetMusd: string | null;
   fundingMode: 'MUSD' | 'BTC';
   deadline: number | null;
   employerWallet: string | null;
   employerUid?: string;
   submissionUrl?: string;
+  submittedAt?: number;
   createdAt: number;
 }
 
@@ -118,6 +123,49 @@ export interface AiVerdict {
   contentBytes?: number;
   digestNote?: string;
   escalated?: boolean;
+  /** Per-requirement findings produced by the AI (absent on verdicts recorded before this existed). */
+  checks?: RequirementCheck[];
+  /** GitHub repository snapshot the AI reviewed, when the deliverable was a GitHub repo. */
+  repo?: RepoInfo;
+}
+
+export interface RequirementCheck {
+  requirement: string;
+  status: 'met' | 'partial' | 'missing';
+  evidence: string;
+}
+
+export interface RepoInfo {
+  fullName: string;
+  url: string;
+  branch: string;
+  commit?: {
+    sha: string;
+    message: string;
+    author: string;
+    date: string;
+    url: string;
+  };
+}
+
+export interface MarketStats {
+  totalJobs: number;
+  activeJobs: number;
+  settledJobs: number;
+  developersPaid: number;
+  /** Decimal wei strings. */
+  btcLockedWei: string;
+  musdInEscrowWei: string;
+  musdPaidWei: string;
+}
+
+export interface JobEvent {
+  name: string;
+  txHash: string;
+  blockNumber: number;
+  /** ms since epoch */
+  timestamp: number;
+  by?: string;
 }
 
 export interface Appeal {
