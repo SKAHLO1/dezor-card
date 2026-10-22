@@ -24,7 +24,7 @@ function notConfigured(res: import('express').Response) {
  */
 jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
   if (!firebaseEnabled) return notConfigured(res);
-  const { onchainId, title, description, tags, budgetMusd, fundingMode, deadline, submissionUrl } =
+  const { onchainId, title, description, tags, category, requirements, budgetMusd, fundingMode, deadline, submissionUrl } =
     req.body ?? {};
   if (onchainId === undefined || !title) {
     return res.status(400).json({ error: 'onchainId and title are required' });
@@ -62,6 +62,10 @@ jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
         title: String(title).slice(0, 200),
         description: String(description ?? '').slice(0, 8000),
         tags: Array.isArray(tags) ? tags.slice(0, 12).map((t) => String(t).slice(0, 30)) : [],
+        ...(category ? { category: String(category).slice(0, 40) } : {}),
+        ...(Array.isArray(requirements)
+          ? { requirements: requirements.slice(0, 12).map((r) => String(r).slice(0, 200)).filter(Boolean) }
+          : {}),
         budgetMusd: budgetMusd ?? null,
         fundingMode: fundingMode === 'BTC' ? 'BTC' : 'MUSD',
         deadline: deadline ?? null,
@@ -113,6 +117,23 @@ jobsRouter.get('/jobs', async (_req, res) => {
   try {
     const snap = await getDb().collection('jobs').orderBy('createdAt', 'desc').limit(200).get();
     return res.json({ jobs: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * Lifecycle events for a job (written by the indexer, one doc per on-chain log), oldest first.
+ * Powers the timeline on the job page.
+ */
+jobsRouter.get('/jobs/:id/events', async (req, res) => {
+  if (!firebaseEnabled) return res.json({ events: [] });
+  try {
+    const snap = await getDb().collection('jobs').doc(req.params.id).collection('events').get();
+    const events = snap.docs
+      .map((d) => d.data() as { blockNumber: number; logIndex?: number })
+      .sort((a, b) => a.blockNumber - b.blockNumber || (a.logIndex ?? 0) - (b.logIndex ?? 0));
+    return res.json({ events });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
   }
