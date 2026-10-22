@@ -1,34 +1,38 @@
 @import 'tailwindcss';
 
 /* ------------------------------------------------------------------ */
-/* SatLock design system — modern hackathon aesthetic.                 */
-/* Near-black canvas, electric violet -> cyan gradient accents,        */
-/* glassmorphic surfaces, bold display type.                          */
+/* TrustieWork design system.                                          */
+/* Warm cream canvas, ink-black type, lime primary, flame-orange       */
+/* highlights, black "ledger" panels for numbers.                      */
 /* ------------------------------------------------------------------ */
 @theme {
-  --color-bg: #07070b;
-  --color-bg-elevated: #0e0e16;
-  --color-surface: #13131f;
-  --color-surface-2: #1a1a2b;
-  --color-border: #26263a;
-  --color-border-strong: #353552;
+  --color-bg: #f3f0e5;
+  --color-bg-elevated: #fdfbf5;
+  --color-surface: #faf8f1;
+  --color-surface-2: #ebe8da;
+  --color-border: #ddd9c8;
+  --color-border-strong: #c3bfaa;
 
-  --color-fg: #ecedf6;
-  --color-muted: #9a9ab2;
-  --color-faint: #61617a;
+  --color-ink: #10120d;
+  --color-ink-2: #1b1e16;
+  --color-ink-3: #2a2d23;
 
-  --color-accent: #7c5cff;
-  --color-accent-2: #22d3ee;
-  --color-accent-soft: #a48bff;
+  --color-fg: #10120d;
+  --color-muted: #54574a;
+  --color-faint: #84877a;
 
-  --color-success: #34d399;
-  --color-warning: #fbbf24;
-  --color-danger: #fb6f84;
+  --color-accent: #d5f43b;
+  --color-accent-2: #e5421a;
+  --color-accent-soft: #3d4b05;
 
-  --radius-card: 1rem;
+  --color-success: #1d7a4a;
+  --color-warning: #9a6200;
+  --color-danger: #c92f27;
+
+  --radius-card: 0.875rem;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-display), var(--font-inter), ui-sans-serif, sans-serif;
+  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
 }
 
 * {
@@ -45,18 +49,13 @@ body {
 
 body {
   min-height: 100vh;
-  /* ambient glow behind the whole app */
-  background-image:
-    radial-gradient(60rem 40rem at 80% -10%, rgba(124, 92, 255, 0.16), transparent 60%),
-    radial-gradient(50rem 36rem at 0% 10%, rgba(34, 211, 238, 0.1), transparent 55%);
-  background-attachment: fixed;
 }
 
 ::selection {
-  background: rgba(124, 92, 255, 0.35);
+  background: var(--color-accent);
+  color: var(--color-ink);
 }
 
-/* thin custom scrollbar */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -69,16 +68,7 @@ body {
 /* ---- shared utility classes ---- */
 @layer components {
   .gradient-text {
-    background: linear-gradient(100deg, var(--color-accent-soft), var(--color-accent-2));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-  }
-
-  .glass {
-    background: color-mix(in srgb, var(--color-surface) 80%, transparent);
-    backdrop-filter: blur(12px);
-    border: 1px solid var(--color-border);
+    color: var(--color-accent-2);
   }
 
   .card {
@@ -94,15 +84,29 @@ body {
       box-shadow 0.18s ease;
   }
   .card-hover:hover {
-    border-color: var(--color-border-strong);
+    border-color: var(--color-ink);
     transform: translateY(-2px);
-    box-shadow: 0 12px 40px -12px rgba(124, 92, 255, 0.25);
+    box-shadow: 0 14px 30px -18px rgba(16, 18, 13, 0.45);
+  }
+
+  .panel-ink {
+    background: var(--color-ink);
+    color: #f3f0e5;
+    border-radius: var(--radius-card);
+  }
+
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
   }
 
   .input {
     width: 100%;
     border-radius: 0.625rem;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--color-border-strong);
     background: var(--color-bg-elevated);
     padding: 0.625rem 0.875rem;
     font-size: 0.875rem;
@@ -114,7 +118,7 @@ body {
     color: var(--color-faint);
   }
   .input:focus {
-    border-color: var(--color-accent);
-    box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
+    border-color: var(--color-ink);
+    box-shadow: 0 0 0 3px rgba(213, 244, 59, 0.55);
   }
 }
