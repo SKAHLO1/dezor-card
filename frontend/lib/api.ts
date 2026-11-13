@@ -157,6 +157,8 @@ export interface MarketStats {
   btcLockedWei: string;
   musdInEscrowWei: string;
   musdPaidWei: string;
+  /** BTC/USD from Mezo's PriceFeed, 18 decimals ("0" when the oracle is stale). */
+  btcPriceWei?: string;
 }
 
 export interface JobEvent {

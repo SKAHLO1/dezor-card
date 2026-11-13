@@ -7,10 +7,15 @@ import {
   useWriteContract,
   usePublicClient,
 } from 'wagmi';
+import type { Abi } from 'viem';
 import {
   escrowAddress,
   satLockEscrowAbi,
+  borrowerOpsAbi,
+  collSurplusPoolAbi,
+  mezo,
   type OnchainJob,
+  type OnchainTrove,
 } from '@/lib/contracts';
 import { isEscrowConfigured } from '@/lib/env';
 
@@ -52,6 +57,53 @@ export function useJobs(ids: (number | string)[]) {
   return { jobs, refetch, isLoading };
 }
 
+const ZERO = '0x0000000000000000000000000000000000000000' as const;
+
+/** An employer's trove: their TroveVault plus live TroveManager + PriceFeed reads. */
+export function useTrove(employer?: `0x${string}`) {
+  const enabled = isEscrowConfigured() && !!employer;
+  const { data, refetch, isLoading } = useReadContract({
+    ...escrow,
+    functionName: 'getTrove',
+    args: enabled ? [employer!] : undefined,
+    query: { enabled, refetchInterval: 30_000 },
+  });
+  return { trove: data as unknown as OnchainTrove | undefined, refetch, isLoading };
+}
+
+/** Live BTC/USD from Mezo's PriceFeed (number of USD). `null` while loading or if the oracle is stale. */
+export function useBtcPrice() {
+  const { trove } = useTrove(ZERO);
+  const price = trove?.price ? Number(trove.price) / 1e18 : null;
+  return { price, raw: trove?.price };
+}
+
+/** Mezo protocol parameters read from BorrowerOperations (min net debt, borrowing fee rate). */
+export function useMezoParams() {
+  const { data } = useReadContracts({
+    contracts: [
+      { address: mezo.borrowerOperations, abi: borrowerOpsAbi, functionName: 'minNetDebt' },
+      { address: mezo.borrowerOperations, abi: borrowerOpsAbi, functionName: 'getBorrowingFee', args: [10n ** 18n] },
+    ],
+  });
+  const minNetDebt = data?.[0].status === 'success' ? Number(data[0].result) / 1e18 : null;
+  const feeRate = data?.[1].status === 'success' ? Number(data[1].result) / 1e18 : null;
+  return { minNetDebt, feeRate };
+}
+
+/** BTC claimable from Mezo's CollSurplusPool after a liquidation or redemption. */
+export function useClaimableCollateral(vault?: `0x${string}`) {
+  const enabled = !!vault && vault !== ZERO;
+  const { data, refetch } = useReadContract({
+    address: mezo.collSurplusPool,
+    abi: collSurplusPoolAbi,
+    functionName: 'getCollateral',
+    args: enabled ? [vault!] : undefined,
+    query: { enabled },
+  });
+  return { claimable: (data as bigint | undefined) ?? 0n, refetch };
+}
+
 export type TxStatus = 'idle' | 'signing' | 'confirming' | 'success' | 'error';
 
 /**
@@ -59,6 +111,11 @@ export type TxStatus = 'idle' | 'signing' | 'confirming' | 'success' | 'error';
  * so action buttons across the app behave consistently.
  */
 export function useEscrowAction() {
+  return useContractAction(escrowAddress as `0x${string}`, satLockEscrowAbi);
+}
+
+/** Same as useEscrowAction, for any contract (e.g. the employer's TroveVault). */
+export function useContractAction(address: `0x${string}` | undefined, abi: Abi) {
   const { writeContractAsync } = useWriteContract();
   const publicClient = usePublicClient();
   const [status, setStatus] = useState<TxStatus>('idle');
@@ -74,9 +131,10 @@ export function useEscrowAction() {
       setError(null);
       setStatus('signing');
       try {
+        if (!address) throw new Error('No contract address');
         const hash = await writeContractAsync({
-          address: escrowAddress as `0x${string}`,
-          abi: satLockEscrowAbi,
+          address,
+          abi,
           functionName: functionName as never,
           args: args as never,
           value: opts?.value,
@@ -99,7 +157,7 @@ export function useEscrowAction() {
         return null;
       }
     },
-    [writeContractAsync, publicClient],
+    [writeContractAsync, publicClient, address, abi],
   );
 
   const reset = () => {

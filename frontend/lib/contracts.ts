@@ -3,6 +3,28 @@ import { env } from '@/lib/env';
 export const escrowAddress = env.contracts.escrow;
 export const musdAddress = env.contracts.musd;
 
+/** Mezo MUSD protocol contracts on Matsnet (mezo-org/musd deployments/matsnet). */
+export const mezo = {
+  borrowerOperations: '0xCdF7028ceAB81fA0C6971208e83fa7872994beE5',
+  troveManager: '0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0',
+  priceFeed: '0x86bCF0841622a5dAC14A313a15f96A95421b9366',
+  collSurplusPool: '0xB4C35747c26E4aB5F1a7CdC7E875B5946eFa6fa9',
+} as const;
+
+/** Mezo protocol constants (LiquityBase.sol). */
+export const MUSD_GAS_COMPENSATION = 200n * 10n ** 18n;
+export const MCR = 1.1; // minimum collateral ratio
+export const CCR = 1.5; // system critical ratio; also our recommended per-trove buffer
+
+/** TroveManager.Status */
+export enum TroveStatus {
+  None = 0,
+  Active = 1,
+  ClosedByOwner = 2,
+  ClosedByLiquidation = 3,
+  ClosedByRedemption = 4,
+}
+
 /* ---- enums (mirror SatLockEscrow.sol) ---- */
 export enum JobStatus {
   None = 0,
@@ -62,6 +84,19 @@ export interface OnchainJob {
   aiVerdictApprove: boolean;
   rating: number;
   detailsURI: string;
+  submittedBlock: bigint;
+}
+
+/* ---- employer trove view returned by getTrove ---- */
+export interface OnchainTrove {
+  vault: `0x${string}`;
+  status: number;
+  coll: bigint;
+  debt: bigint;
+  /** BTC/USD from Mezo's PriceFeed, 18 decimals. 0 when the oracle is stale. */
+  price: bigint;
+  /** Individual collateral ratio, 18 decimals. */
+  icr: bigint;
 }
 
 /* ---- ABIs ---- */
@@ -110,6 +145,19 @@ const jobTuple = {
     { name: 'aiVerdictApprove', type: 'bool' },
     { name: 'rating', type: 'uint8' },
     { name: 'detailsURI', type: 'string' },
+    { name: 'submittedBlock', type: 'uint64' },
+  ],
+} as const;
+
+const troveTuple = {
+  type: 'tuple',
+  components: [
+    { name: 'vault', type: 'address' },
+    { name: 'status', type: 'uint8' },
+    { name: 'coll', type: 'uint256' },
+    { name: 'debt', type: 'uint256' },
+    { name: 'price', type: 'uint256' },
+    { name: 'icr', type: 'uint256' },
   ],
 } as const;
 
@@ -133,6 +181,8 @@ export const satLockEscrowAbi = [
       { name: 'musdToBorrow', type: 'uint256' },
       { name: 'deadline', type: 'uint64' },
       { name: 'detailsURI', type: 'string' },
+      { name: 'upperHint', type: 'address' },
+      { name: 'lowerHint', type: 'address' },
     ],
     outputs: [{ name: 'id', type: 'uint256' }],
   },
@@ -225,9 +275,89 @@ export const satLockEscrowAbi = [
   },
   {
     type: 'function',
+    name: 'getTrove',
+    stateMutability: 'view',
+    inputs: [{ name: 'employer', type: 'address' }],
+    outputs: [troveTuple],
+  },
+  {
+    type: 'function',
+    name: 'vaultOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'employer', type: 'address' }],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
     name: 'getJob',
     stateMutability: 'view',
     inputs: [{ name: 'id', type: 'uint256' }],
     outputs: [jobTuple],
+  },
+] as const;
+
+/** The employer's TroveVault — owns their Mezo trove; every BTC it returns goes to the employer. */
+export const troveVaultAbi = [
+  {
+    type: 'function',
+    name: 'addCollateral',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'upperHint', type: 'address' },
+      { name: 'lowerHint', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'withdrawCollateral',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'upperHint', type: 'address' },
+      { name: 'lowerHint', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'repay',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'upperHint', type: 'address' },
+      { name: 'lowerHint', type: 'address' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'closeTrove',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'maxMusd', type: 'uint256' }],
+    outputs: [],
+  },
+  { type: 'function', name: 'claimCollateral', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+] as const;
+
+/** Reads from Mezo's BorrowerOperations and CollSurplusPool used for previews. */
+export const borrowerOpsAbi = [
+  { type: 'function', name: 'minNetDebt', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'getBorrowingFee',
+    stateMutability: 'view',
+    inputs: [{ name: '_debt', type: 'uint256' }],
+    outputs: [{ type: 'uint256' }],
+  },
+] as const;
+
+export const collSurplusPoolAbi = [
+  {
+    type: 'function',
+    name: 'getCollateral',
+    stateMutability: 'view',
+    inputs: [{ name: '_account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
   },
 ] as const;
