@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppShell, Protected } from '@/components/AppShell';
 import { JobCard } from '@/components/JobCard';
+import { TrovePanel } from '@/components/TrovePanel';
 import { Skeleton, EmptyState, LinkButton } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useJobs } from '@/lib/escrow';
@@ -54,6 +55,12 @@ function Dashboard() {
           </LinkButton>
         )}
       </div>
+
+      {isBuyer && (
+        <div className="mb-8">
+          <TrovePanel />
+        </div>
+      )}
 
       {metas === null ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
