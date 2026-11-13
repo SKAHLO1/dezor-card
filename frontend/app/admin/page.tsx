@@ -124,7 +124,7 @@ function AdminConsole() {
     setError(null);
     try {
       // /ai/arbitrate isn't admin-gated — uses the normal Firebase token only.
-      await api.post(`/ai/arbitrate/${job.id}`, { submissionUrl: url });
+      await api.post(`/ai/arbitrate/${job.id}`);
       load();
     } catch (e) {
       setError(`Arbitration failed for job #${job.id}: ${(e as Error).message}`);

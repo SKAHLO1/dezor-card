@@ -8,7 +8,6 @@ import { Skeleton, StatTile } from '@/components/ui';
 import { api, type JobMeta, type MarketStats } from '@/lib/api';
 import { useJobs } from '@/lib/escrow';
 import { JobStatus } from '@/lib/contracts';
-import { DEFAULT_BTC_PRICE_USD } from '@/lib/mezo/trove';
 
 const fmt = (n: number, max = 2) => n.toLocaleString(undefined, { maximumFractionDigits: max });
 
@@ -22,6 +21,7 @@ export function LiveStats() {
 
   const btcLocked = stats ? Number(formatEther(BigInt(stats.btcLockedWei))) : 0;
   const musdPaid = stats ? Number(formatEther(BigInt(stats.musdPaidWei))) : 0;
+  const btcPrice = stats?.btcPriceWei ? Number(formatEther(BigInt(stats.btcPriceWei))) : 0;
   const loading = stats === undefined;
   // Backend unreachable: show dashes rather than zeros that would read as real numbers.
   const n = (v: string) => (stats ? v : '—');
@@ -39,7 +39,13 @@ export function LiveStats() {
                 {n(fmt(btcLocked, 4))} <span className="text-lg text-accent">BTC</span>
               </>
             }
-            sub={stats ? `≈ $${fmt(btcLocked * DEFAULT_BTC_PRICE_USD, 0)} at $${fmt(DEFAULT_BTC_PRICE_USD, 0)}/BTC` : 'Live stats unavailable'}
+            sub={
+              !stats
+                ? 'Live stats unavailable'
+                : btcPrice > 0
+                  ? `≈ $${fmt(btcLocked * btcPrice, 0)} at $${fmt(btcPrice, 0)}/BTC (Mezo PriceFeed)`
+                  : 'Mezo PriceFeed unavailable right now'
+            }
           />
           <StatTile label="Active jobs" value={n(fmt(stats?.activeJobs ?? 0, 0))} sub={stats ? `${fmt(stats.totalJobs, 0)} posted all-time` : undefined} />
           <StatTile label="Developers paid" value={n(fmt(stats?.developersPaid ?? 0, 0))} sub={stats ? `${fmt(stats.settledJobs, 0)} jobs settled` : undefined} />

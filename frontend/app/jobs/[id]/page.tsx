@@ -24,11 +24,10 @@ import {
 } from '@/components/ui';
 import { Stars, RatingInput } from '@/components/Stars';
 import { useAuth } from '@/components/AuthProvider';
-import { useJob, useEscrowAction } from '@/lib/escrow';
+import { useJob, useEscrowAction, useBtcPrice } from '@/lib/escrow';
 import { JobStatus, jobStatusLabel, jobStatusTone, FundingMode, escrowAddress } from '@/lib/contracts';
 import { api, type JobMeta, type AiVerdict, type JobEvent } from '@/lib/api';
 import { musd, btc, shortAddr, timeLeft, explorerAddr, explorerTx, isZeroAddr } from '@/lib/format';
-import { DEFAULT_BTC_PRICE_USD } from '@/lib/mezo/trove';
 import { formatEther } from 'viem';
 
 const EVENT_LABEL: Record<string, string> = {
@@ -44,6 +43,7 @@ const EVENT_LABEL: Record<string, string> = {
   JobRefunded: 'Escrow refunded to buyer',
   JobCancelled: 'Job cancelled by buyer',
   ReviewLeft: 'Buyer left a review',
+  TroveFunded: 'Escrow funded from the employer\u2019s Mezo trove',
 };
 
 const fmtDate = (ms: number) =>
@@ -54,6 +54,7 @@ function JobDetail({ id }: { id: string }) {
   const { address } = useAccount();
   const { job, refetch, isLoading } = useJob(id);
   const action = useEscrowAction();
+  const { price: btcPrice } = useBtcPrice();
 
   const [meta, setMeta] = useState<JobMeta | null>(null);
   const [verdicts, setVerdicts] = useState<AiVerdict[]>([]);
@@ -106,7 +107,7 @@ function JobDetail({ id }: { id: string }) {
     setNotice('Work submitted. Running the AI review…');
     setAiBusy(true);
     try {
-      await api.post('/ai/review-submission', { jobId: id, submissionUrl: submissionUrl.trim() });
+      await api.post('/ai/review-submission', { jobId: id });
     } catch (err) {
       setNotice(`AI review failed: ${(err as Error).message}`);
     }
@@ -120,7 +121,7 @@ function JobDetail({ id }: { id: string }) {
     setAiBusy(true);
     setNotice(null);
     try {
-      await api.post('/ai/review-submission', { jobId: id, submissionUrl: url });
+      await api.post('/ai/review-submission', { jobId: id });
       loadOffchain();
     } catch (err) {
       setNotice(`AI review failed: ${(err as Error).message}`);
@@ -155,7 +156,7 @@ function JobDetail({ id }: { id: string }) {
     setAiBusy(true);
     setNotice('AI arbiter re-evaluating the dispute…');
     try {
-      await api.post(`/ai/arbitrate/${id}`, { submissionUrl: url });
+      await api.post(`/ai/arbitrate/${id}`);
       setNotice(null);
     } catch (err) {
       setNotice(`Arbitration failed: ${(err as Error).message}`);
@@ -388,7 +389,9 @@ function JobDetail({ id }: { id: string }) {
               </p>
               <p className="mt-1 text-xs text-bg/60">
                 {job.mode === FundingMode.BTC
-                  ? `≈ $${(btcAmount * DEFAULT_BTC_PRICE_USD).toLocaleString(undefined, { maximumFractionDigits: 0 })} est.`
+                  ? btcPrice
+                    ? `≈ $${(btcAmount * btcPrice).toLocaleString(undefined, { maximumFractionDigits: 0 })} at Mezo PriceFeed`
+                    : 'Locked in the employer\u2019s Mezo trove'
                   : 'No BTC locked for this job'}
               </p>
             </div>
