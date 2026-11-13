@@ -1,4 +1,4 @@
-import { escrowAbi, escrowAddress, publicClient, arbiterWallet, Status } from '../chain';
+import { escrowAbi, escrowAddress, publicClient, arbiterWallet, Status, readOnchainSubmissionUrl } from '../chain';
 import { getVerdict, type Verdict } from '../arbiter';
 import { buildSubmissionDigest, type DigestQuality, type RepoInfo } from '../github';
 import { getDb, firebaseEnabled, ns } from '../firebase';
@@ -81,10 +81,15 @@ async function resolveJobSpec(jobId: string, detailsURI: string): Promise<string
   }
 }
 
-export async function reviewSubmission(
-  jobId: string,
-  submissionUrl: string,
-): Promise<SubmissionReview> {
+/** The URL the AI reviews always comes from the on-chain WorkSubmitted event. */
+async function requireOnchainSubmission(jobId: string): Promise<string> {
+  const url = await readOnchainSubmissionUrl(jobId);
+  if (!url) throw new Error(`job ${jobId} has no on-chain submission`);
+  return url;
+}
+
+export async function reviewSubmission(jobId: string): Promise<SubmissionReview> {
+  const submissionUrl = await requireOnchainSubmission(jobId);
   const job = await publicClient.readContract({
     address: escrowAddress,
     abi: escrowAbi,
@@ -101,10 +106,7 @@ export async function reviewSubmission(
   return { jobId, submissionUrl, ...verdict, ...meta };
 }
 
-export async function arbitrateDispute(
-  jobId: string,
-  submissionUrl: string,
-): Promise<DisputeArbitration> {
+export async function arbitrateDispute(jobId: string): Promise<DisputeArbitration> {
   const job = await publicClient.readContract({
     address: escrowAddress,
     abi: escrowAbi,
@@ -114,6 +116,7 @@ export async function arbitrateDispute(
   if (job.status !== Status.Disputed) {
     throw new Error(`job ${jobId} is not in the Disputed state (status ${job.status})`);
   }
+  const submissionUrl = await requireOnchainSubmission(jobId);
 
   const [{ digest, isGithub, resolved, quality, contentBytes, note, repo }, spec] = await Promise.all([
     buildSubmissionDigest(submissionUrl),

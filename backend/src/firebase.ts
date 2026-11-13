@@ -91,6 +91,11 @@ declare global {
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!app) {
+    // Never trust caller-supplied identity in production: a missing service account would
+    // otherwise let anyone claim any wallet (and pass the job-party checks).
+    if (process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'authentication is not configured on this server' });
+    }
     req.uid = (req.header('x-dev-uid') as string) || 'dev-user';
     req.walletAddress = (req.header('x-dev-wallet') as string)?.toLowerCase();
     return next();

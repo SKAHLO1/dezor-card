@@ -88,14 +88,16 @@ async function projectJobToFirestore(jobId: string) {
   }
 }
 
-async function getSubmissionUrl(jobId: string): Promise<string | null> {
-  if (!firebaseEnabled) return null;
+/** Store the on-chain submission URL on the job doc — the event is the source of truth. */
+async function recordSubmissionUrl(jobId: string, url: string) {
+  if (!firebaseEnabled) return;
   try {
-    const snap = await getDb().collection(ns('jobs')).doc(jobId).get();
-    const url = snap.data()?.submissionUrl as string | undefined;
-    return url ?? null;
-  } catch {
-    return null;
+    await getDb()
+      .collection(ns('jobs'))
+      .doc(jobId)
+      .set({ submissionUrl: url.slice(0, 500), submissionSource: 'onchain', updatedAt: Date.now() }, { merge: true });
+  } catch (err) {
+    console.error(`indexer: failed to record submission URL for job ${jobId}:`, err);
   }
 }
 
@@ -146,15 +148,15 @@ async function handleEvent(log: LogLike) {
 
   // Side-effects: auto-fire AI.
   if (log.eventName === 'WorkSubmitted') {
-    const submissionUrl = (log.args.submissionURI as string | undefined)?.trim() || null;
-    const url = submissionUrl || (await getSubmissionUrl(jobId));
+    const url = (log.args.submissionURI as string | undefined)?.trim();
     if (!url) {
-      console.warn(`indexer: WorkSubmitted on job ${jobId} but no submission URL — skipping AI review`);
+      console.warn(`indexer: WorkSubmitted on job ${jobId} has an empty submission URI — skipping AI review`);
       return;
     }
+    await recordSubmissionUrl(jobId, url);
     if (await hasVerdict(jobId, 'submission')) return;
     try {
-      await reviewSubmission(jobId, url);
+      await reviewSubmission(jobId);
       console.log(`indexer: AI submission review recorded for job ${jobId}`);
     } catch (err) {
       console.error(`indexer: AI submission review failed for job ${jobId}:`, err);
@@ -162,14 +164,9 @@ async function handleEvent(log: LogLike) {
   }
 
   if (log.eventName === 'JobDisputed') {
-    const url = await getSubmissionUrl(jobId);
-    if (!url) {
-      console.warn(`indexer: JobDisputed on job ${jobId} but no submission URL — skipping AI arbitration`);
-      return;
-    }
     if (await hasVerdict(jobId, 'dispute')) return;
     try {
-      const r = await arbitrateDispute(jobId, url);
+      const r = await arbitrateDispute(jobId);
       console.log(
         `indexer: AI arbitration ${r.escalated ? 'escalated' : 'recorded'} for job ${jobId}` +
           (r.txHash ? ` (tx ${r.txHash})` : ''),

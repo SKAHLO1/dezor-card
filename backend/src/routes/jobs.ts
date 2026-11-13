@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requireAuth, getDb, firebaseEnabled, ns } from '../firebase';
-import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
+import { escrowAbi, escrowAddress, publicClient, Status, readOnchainSubmissionUrl } from '../chain';
 
 export const jobsRouter = Router();
 
@@ -17,14 +17,15 @@ function notConfigured(res: import('express').Response) {
 /**
  * Upsert a job's *off-chain* metadata. Called by the buyer right after posting on-chain.
  *
- * Only mutates user-supplied content fields (title, description, tags, budgetMusd,
- * fundingMode, deadline, submissionUrl). The authoritative on-chain projection is
+ * Only mutates user-supplied content fields (title, description, tags, category, requirements,
+ * budgetMusd, fundingMode, deadline). The submission URL is never accepted here: it comes only
+ * from the on-chain WorkSubmitted event. The authoritative on-chain projection is
  * written exclusively by the indexer under `onchain.*` — clients cannot lie about
  * status, freelancer, amount, etc.
  */
 jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
   if (!firebaseEnabled) return notConfigured(res);
-  const { onchainId, title, description, tags, category, requirements, budgetMusd, fundingMode, deadline, submissionUrl } =
+  const { onchainId, title, description, tags, category, requirements, budgetMusd, fundingMode, deadline } =
     req.body ?? {};
   if (onchainId === undefined || !title) {
     return res.status(400).json({ error: 'onchainId and title are required' });
@@ -69,7 +70,6 @@ jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
         budgetMusd: budgetMusd ?? null,
         fundingMode: fundingMode === 'BTC' ? 'BTC' : 'MUSD',
         deadline: deadline ?? null,
-        ...(submissionUrl ? { submissionUrl: String(submissionUrl).slice(0, 500) } : {}),
         updatedAt: Date.now(),
       },
       { merge: true },
@@ -81,24 +81,35 @@ jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
 });
 
 /**
- * Attach / update the developer's submission URL on a job (called alongside submitWork).
- * Authorised against the on-chain freelancer projection written by the indexer — only the
- * wallet currently holding the job can attach a submission URL.
+ * Mirror the developer's submission URL onto the job doc right after submitWork, so the UI
+ * updates before the indexer catches up. The stored URL is always the one in the on-chain
+ * WorkSubmitted event; a body URL that differs from it is rejected.
  */
 jobsRouter.post('/jobs/:id/submission', requireAuth, async (req, res) => {
   if (!firebaseEnabled) return notConfigured(res);
   const submissionUrl = String(req.body?.submissionUrl ?? '').trim();
   if (!submissionUrl) return res.status(400).json({ error: 'submissionUrl is required' });
   try {
-    const ref = getDb().collection(ns('jobs')).doc(req.params.id);
-    const snap = await ref.get();
-    const onchainFreelancer = (snap.data()?.onchain?.freelancer as string | undefined)?.toLowerCase();
-    if (onchainFreelancer && onchainFreelancer !== req.walletAddress) {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({ error: 'invalid job id' });
+    const job = await publicClient.readContract({
+      address: escrowAddress,
+      abi: escrowAbi,
+      functionName: 'getJob',
+      args: [BigInt(req.params.id)],
+    });
+    if (job.freelancer.toLowerCase() !== req.walletAddress) {
       return res.status(403).json({ error: 'not the job freelancer' });
     }
+    const onchainUrl = await readOnchainSubmissionUrl(req.params.id);
+    if (!onchainUrl) return res.status(409).json({ error: 'no on-chain submission yet — call submitWork first' });
+    if (onchainUrl !== submissionUrl) {
+      return res.status(409).json({ error: 'submissionUrl does not match the on-chain WorkSubmitted event' });
+    }
+    const ref = getDb().collection(ns('jobs')).doc(req.params.id);
     await ref.set(
       {
-        submissionUrl: submissionUrl.slice(0, 500),
+        submissionUrl: onchainUrl.slice(0, 500),
+        submissionSource: 'onchain',
         submittedByUid: req.uid,
         submittedAt: Date.now(),
         updatedAt: Date.now(),
