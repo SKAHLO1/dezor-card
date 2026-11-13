@@ -39,6 +39,20 @@ const jobTuple = {
     { name: 'aiVerdictApprove', type: 'bool' },
     { name: 'rating', type: 'uint8' },
     { name: 'detailsURI', type: 'string' },
+    { name: 'submittedBlock', type: 'uint64' },
+  ],
+} as const;
+
+// TroveView returned by getTrove(): the employer's vault + live TroveManager/PriceFeed reads.
+const troveTuple = {
+  type: 'tuple',
+  components: [
+    { name: 'vault', type: 'address' },
+    { name: 'status', type: 'uint8' },
+    { name: 'coll', type: 'uint256' },
+    { name: 'debt', type: 'uint256' },
+    { name: 'price', type: 'uint256' },
+    { name: 'icr', type: 'uint256' },
   ],
 } as const;
 
@@ -60,6 +74,13 @@ export const escrowAbi = [
   },
   {
     type: 'function',
+    name: 'getTrove',
+    stateMutability: 'view',
+    inputs: [{ name: 'employer', type: 'address' }],
+    outputs: [troveTuple],
+  },
+  {
+    type: 'function',
     name: 'resolveDispute',
     stateMutability: 'nonpayable',
     inputs: [
@@ -70,6 +91,10 @@ export const escrowAbi = [
     outputs: [],
   },
   parseAbiItem('event JobPosted(uint256 indexed id, address indexed employer, uint256 amount, uint8 mode, uint64 deadline)'),
+  parseAbiItem('event VaultCreated(address indexed employer, address vault)'),
+  parseAbiItem(
+    'event TroveFunded(uint256 indexed id, address indexed employer, address vault, uint256 btcAdded, uint256 musdBorrowed, bool openedTrove)',
+  ),
   parseAbiItem('event JobClaimed(uint256 indexed id, address indexed freelancer)'),
   parseAbiItem('event JobUnclaimed(uint256 indexed id, address indexed freelancer)'),
   parseAbiItem('event WorkSubmitted(uint256 indexed id, string submissionURI)'),
@@ -98,3 +123,42 @@ export const Status = {
   Refunded: 8,
   Cancelled: 9,
 } as const;
+
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+/** Live BTC/USD from Mezo's PriceFeed (via the escrow's getTrove view). 0 if the oracle is stale. */
+export async function readBtcPrice(): Promise<bigint> {
+  const t = await publicClient.readContract({
+    address: escrowAddress,
+    abi: escrowAbi,
+    functionName: 'getTrove',
+    args: [ZERO_ADDRESS],
+  });
+  return t.price;
+}
+
+/**
+ * The deliverable URL exactly as the developer submitted it on-chain. The contract records the
+ * block of the WorkSubmitted event, so this is a single-block log query — never a client value.
+ * Returns null if the job has no on-chain submission.
+ */
+export async function readOnchainSubmissionUrl(jobId: string | bigint): Promise<string | null> {
+  const id = BigInt(jobId);
+  const job = await publicClient.readContract({
+    address: escrowAddress,
+    abi: escrowAbi,
+    functionName: 'getJob',
+    args: [id],
+  });
+  if (!job.submittedBlock) return null;
+  const logs = await publicClient.getContractEvents({
+    address: escrowAddress,
+    abi: escrowAbi,
+    eventName: 'WorkSubmitted',
+    args: { id },
+    fromBlock: job.submittedBlock,
+    toBlock: job.submittedBlock,
+  });
+  const uri = logs.at(-1)?.args.submissionURI?.trim();
+  return uri || null;
+}

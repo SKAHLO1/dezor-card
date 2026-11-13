@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
+import { escrowAbi, escrowAddress, publicClient, Status, readBtcPrice } from '../chain';
 
 export const statsRouter = Router();
 
@@ -42,7 +42,7 @@ async function computeStats(): Promise<Record<string, unknown>> {
     await publicClient.readContract({ address: escrowAddress, abi: escrowAbi, functionName: 'nextJobId' }),
   );
   const ids = Array.from({ length: Math.min(count, MAX_JOBS) }, (_, i) => i);
-  const jobs: { status: number; mode: number; amount: bigint; btcCollateral: bigint; freelancer: string }[] = [];
+  const jobs: { status: number; mode: number; amount: bigint; employer: string; freelancer: string }[] = [];
   for (let i = 0; i < ids.length; i += 20) {
     const batch = await Promise.all(
       ids.slice(i, i + 20).map((id) =>
@@ -60,16 +60,14 @@ async function computeStats(): Promise<Record<string, unknown>> {
   let totalJobs = 0;
   let activeJobs = 0;
   let settledJobs = 0;
-  let btcLocked = 0n;
   let inEscrow = 0n;
   let paid = 0n;
   const paidDevs = new Set<string>();
+  const btcEmployers = new Set<`0x${string}`>();
   for (const oc of jobs) {
     if (oc.status === Status.None) continue;
     totalJobs++;
-    // BTC collateral sits in a trove owned by the escrow contract and is not repaid in v1,
-    // so every BTC-funded job counts toward the locked total.
-    if (oc.mode === 1) btcLocked += oc.btcCollateral;
+    if (oc.mode === 1) btcEmployers.add(oc.employer as `0x${string}`);
     if (ACTIVE.has(oc.status)) {
       activeJobs++;
       inEscrow += oc.amount;
@@ -80,7 +78,25 @@ async function computeStats(): Promise<Record<string, unknown>> {
       paidDevs.add(oc.freelancer.toLowerCase());
     }
   }
+  // BTC locked = collateral currently in employers' active troves, read from Mezo's TroveManager
+  // through the escrow's getTrove view (employers can withdraw or close, so job deposits overstate it).
+  let btcLocked = 0n;
+  let activeTroves = 0;
+  for (const employer of btcEmployers) {
+    const t = await publicClient.readContract({
+      address: escrowAddress,
+      abi: escrowAbi,
+      functionName: 'getTrove',
+      args: [employer],
+    });
+    if (t.status === 1) {
+      btcLocked += t.coll;
+      activeTroves++;
+    }
+  }
+  const btcPrice = await readBtcPrice().catch(() => 0n);
   return {
+    activeTroves,
     totalJobs,
     activeJobs,
     settledJobs,
@@ -88,5 +104,7 @@ async function computeStats(): Promise<Record<string, unknown>> {
     btcLockedWei: btcLocked.toString(),
     musdInEscrowWei: inEscrow.toString(),
     musdPaidWei: paid.toString(),
+    // BTC/USD from Mezo's PriceFeed (18 decimals); "0" when the oracle is stale.
+    btcPriceWei: btcPrice.toString(),
   };
 }
