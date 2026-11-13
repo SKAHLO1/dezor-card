@@ -7,11 +7,14 @@ import { formatEther, parseEther } from 'viem';
 import { AppShell, Protected } from '@/components/AppShell';
 import { Button, Card, Field, Input, Textarea } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
-import { useEscrowAction, useJobCount } from '@/lib/escrow';
-import { escrowAddress, musdAddress, erc20Abi } from '@/lib/contracts';
+import { useEscrowAction, useJobCount, useTrove, useMezoParams } from '@/lib/escrow';
+import { escrowAddress, musdAddress, erc20Abi, TroveStatus } from '@/lib/contracts';
 import { isEscrowConfigured } from '@/lib/env';
 import { api } from '@/lib/api';
-import { quoteTrove, DEFAULT_BTC_PRICE_USD } from '@/lib/mezo/trove';
+import { quoteTrove } from '@/lib/mezo/trove';
+import { explorerAddr, shortAddr } from '@/lib/format';
+
+const ZERO = '0x0000000000000000000000000000000000000000' as const;
 
 type Mode = 'MUSD' | 'BTC';
 
@@ -54,18 +57,36 @@ function NewJob() {
   const [requirements, setRequirements] = useState('');
   const [budget, setBudget] = useState('500');
   const [btcCollateral, setBtcCollateral] = useState('0.05');
-  const [btcPrice, setBtcPrice] = useState(String(DEFAULT_BTC_PRICE_USD));
   const [days, setDays] = useState('14');
   const [step, setStep] = useState<string | null>(null);
   // If the on-chain post lands but the off-chain sync fails, we stash the id here so the
   // user can retry the sync without re-posting (and re-funding) the job.
   const [unsyncedId, setUnsyncedId] = useState<number | null>(null);
 
+  // Live Mezo state: the employer's own trove (TroveManager), BTC price (PriceFeed), and
+  // protocol parameters (BorrowerOperations). Nothing here is a hard-coded assumption.
+  const { trove: myTrove } = useTrove(address);
+  const { minNetDebt, feeRate } = useMezoParams();
+  const btcPrice = myTrove?.price ? Number(myTrove.price) / 1e18 : null;
+  const activeTrove = myTrove?.status === TroveStatus.Active;
+  const liveReady = btcPrice !== null && minNetDebt !== null && feeRate !== null;
+
   const trove =
-    mode === 'BTC'
-      ? quoteTrove(Number(btcCollateral) || 0, Number(budget) || 0, Number(btcPrice) || 0)
+    mode === 'BTC' && liveReady
+      ? quoteTrove({
+          btcToAdd: Number(btcCollateral) || 0,
+          musdToBorrow: Number(budget) || 0,
+          btcPriceUsd: btcPrice!,
+          minNetDebt: minNetDebt!,
+          feeRate: feeRate!,
+          existing: activeTrove
+            ? { coll: Number(formatEther(myTrove!.coll)), debt: Number(formatEther(myTrove!.debt)) }
+            : null,
+        })
       : null;
-  const troveOk = !trove || (trove.health !== 'liquidation' && trove.clearsMinDebt);
+  const troveOk =
+    mode !== 'BTC' ||
+    (!!trove && trove.health !== 'liquidation' && trove.clearsMinDebt && trove.warnings.every((w) => !w.includes('needs BTC')));
 
   // Funding-balance checks against the connected wallet.
   let balanceError: string | null = null;
@@ -77,7 +98,7 @@ function NewJob() {
         balanceError = `You have ${formatEther(have)} MUSD but this job needs ${budget}. Either reduce the payout, or switch to "Lock BTC collateral" to mint MUSD against BTC in one step.`;
       }
     } else {
-      const need = parseEther(btcCollateral || '0');
+      const need = parseEther(btcCollateral && Number(btcCollateral) > 0 ? btcCollateral : '0');
       const have = btcBalance?.value ?? 0n;
       if (have < need) {
         balanceError = `You have ${formatEther(have)} BTC but this job locks ${btcCollateral}. Top up from the matsnet faucet or lower the collateral.`;
@@ -119,8 +140,12 @@ function NewJob() {
           const hash = await action.run('postJobWithMUSD', [amount, deadline, detailsURI]);
           if (!hash) return;
         } else {
-          setStep('Locking BTC, minting MUSD & posting…');
-          const hash = await action.run('postJobWithBTC', [amount, deadline, detailsURI], {
+          setStep(
+            activeTrove
+              ? 'Pooling this job into your trove (adjustTrove) & posting…'
+              : 'Opening your trove, minting MUSD & posting…',
+          );
+          const hash = await action.run('postJobWithBTC', [amount, deadline, detailsURI, ZERO, ZERO], {
             value: parseEther(btcCollateral || '0'),
           });
           if (!hash) return;
@@ -260,20 +285,20 @@ function NewJob() {
           </Field>
           {mode === 'BTC' && (
             <>
-              <Field label="BTC collateral to lock">
+              <Field
+                label={activeTrove ? 'BTC to add to your trove' : 'BTC collateral to lock'}
+                hint={
+                  activeTrove
+                    ? 'Optional — 0 borrows against the collateral already in your trove.'
+                    : 'Opens your own Mezo trove, held by your personal TroveVault.'
+                }
+              >
                 <Input
                   type="number"
                   step="0.001"
+                  min="0"
                   value={btcCollateral}
                   onChange={(e) => setBtcCollateral(e.target.value)}
-                />
-              </Field>
-              <Field label="BTC price assumption (USD)" hint="Used only for the trove health preview below.">
-                <Input
-                  type="number"
-                  step="100"
-                  value={btcPrice}
-                  onChange={(e) => setBtcPrice(e.target.value)}
                 />
               </Field>
             </>
@@ -289,6 +314,12 @@ function NewJob() {
           </div>
         )}
 
+        {mode === 'BTC' && !liveReady && (
+          <div className="rounded-lg border border-border bg-surface-2 p-3 text-sm text-muted">
+            Reading your trove and the BTC price from Mezo…
+          </div>
+        )}
+
         {trove && (
           <div
             className={`rounded-lg border p-3 text-sm ${
@@ -299,12 +330,30 @@ function NewJob() {
                   : 'border-border bg-surface-2 text-muted'
             }`}
           >
-            <p className="font-semibold">Trove preview</p>
+            <p className="font-semibold">
+              {trove.opens ? 'Opens your trove' : 'Pools into your trove with adjustTrove'}
+              {myTrove?.vault && myTrove.vault !== ZERO && (
+                <>
+                  {' · '}
+                  <a href={explorerAddr(myTrove.vault)} target="_blank" rel="noreferrer" className="underline">
+                    vault {shortAddr(myTrove.vault)}
+                  </a>
+                </>
+              )}
+            </p>
             <p className="mt-1">
-              Collateral ratio:{' '}
-              {Number.isFinite(trove.ratio) ? `${(trove.ratio * 100).toFixed(0)}%` : '∞'} ·
-              collateral value: ${trove.collateralUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })} ·
-              max safe borrow: {trove.maxBorrowable.toLocaleString(undefined, { maximumFractionDigits: 0 })} MUSD
+              BTC ${btcPrice!.toLocaleString(undefined, { maximumFractionDigits: 0 })} (Mezo PriceFeed) · after
+              this job: {trove.newColl.toLocaleString(undefined, { maximumFractionDigits: 6 })} BTC /{' '}
+              {trove.newDebt.toLocaleString(undefined, { maximumFractionDigits: 2 })} MUSD debt · ratio{' '}
+              {Number.isFinite(trove.ratio) ? `${(trove.ratio * 100).toFixed(0)}%` : '∞'} · liquidation below $
+              {Number.isFinite(trove.liquidationPrice)
+                ? trove.liquidationPrice.toLocaleString(undefined, { maximumFractionDigits: 0 })
+                : '—'}
+            </p>
+            <p className="mt-1 text-xs">
+              Debt includes the {trove.fee.toLocaleString(undefined, { maximumFractionDigits: 2 })} MUSD borrowing fee
+              {trove.opens ? ' and the 200 MUSD gas compensation' : ''}. You can repay, top up, close the trove and
+              reclaim your BTC from your dashboard.
             </p>
             {trove.warnings.map((w) => (
               <p key={w} className="mt-1">{w}</p>
