@@ -1,0 +1,22 @@
+{
+  "chainId": 31611,
+  "network": "matsnet",
+  "escrow": "0xf0163fab9e58f901afc994fca363255a536f5823",
+  "musd": "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+  "borrowerOperations": "0xCdF7028ceAB81fA0C6971208e83fa7872994beE5",
+  "troveManager": "0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0",
+  "priceFeed": "0x86bCF0841622a5dAC14A313a15f96A95421b9366",
+  "hintHelpers": "0x4e4cBA3779d56386ED43631b4dCD6d8EacEcBCF6",
+  "sortedTroves": "0x722E4D24FD6Ff8b0AC679450F3D91294607268fA",
+  "aiArbiter": "0x9818878881A6D20632c715A9eD55D26dcFBE52E0",
+  "owner": "0xb94802b210c28425dd424da264cb99c6f4e30450",
+  "constructorArgs": [
+    "0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503",
+    "0xCdF7028ceAB81fA0C6971208e83fa7872994beE5",
+    "0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0",
+    "0x86bCF0841622a5dAC14A313a15f96A95421b9366",
+    "0x9818878881A6D20632c715A9eD55D26dcFBE52E0"
+  ],
+  "deployBlock": "16598747",
+  "verified": "https://explorer.test.mezo.org/address/0xf0163fab9e58f901afc994fca363255a536f5823#code"
+}

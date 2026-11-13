@@ -13,7 +13,7 @@ import { resolve } from 'path';
  */
 
 const ROOT = resolve(__dirname, '..', '..');
-const ADDRESSES = resolve(__dirname, '..', 'artifacts', 'addresses.matsnet.json');
+const ADDRESSES = resolve(__dirname, '..', 'deployments', 'matsnet.json');
 const BACKEND_ENV = resolve(ROOT, 'backend', '.env');
 const FRONTEND_ENV = resolve(ROOT, 'frontend', '.env.local');
 
@@ -48,10 +48,15 @@ function main() {
     throw new Error(`No deploy artifact found at ${ADDRESSES}. Run \`pnpm deploy\` first.`);
   }
   const addr = JSON.parse(readFileSync(ADDRESSES, 'utf8'));
-  if (!addr.escrow) throw new Error('addresses.matsnet.json is missing `escrow`');
+  if (!addr.escrow) throw new Error('matsnet.json is missing `escrow` (deployments/matsnet.json)');
 
   patchEnv(BACKEND_ENV, 'ESCROW_ADDRESS', addr.escrow);
   patchEnv(FRONTEND_ENV, 'NEXT_PUBLIC_ESCROW_ADDRESS', addr.escrow);
+  // A new escrow restarts job ids at 0: index from its deploy block and keep its Firestore
+  // records in their own namespace so earlier deployments' jobs don't collide.
+  if (addr.deployBlock) patchEnv(BACKEND_ENV, 'INDEXER_START_BLOCK', addr.deployBlock);
+  const nsArg = process.argv.find((a) => a.startsWith('--namespace='));
+  patchEnv(BACKEND_ENV, 'FIRESTORE_NAMESPACE', nsArg ? nsArg.split('=')[1] : 'v2_');
 
   if (addr.owner) patchEnv(BACKEND_ENV, 'ADMIN_ADDRESS', addr.owner);
   if (addr.owner) patchEnv(FRONTEND_ENV, 'NEXT_PUBLIC_ADMIN_ADDRESS', addr.owner);

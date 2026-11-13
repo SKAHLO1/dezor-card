@@ -8,7 +8,10 @@
     "deploy": "hardhat run scripts/deploy.ts --network matsnet",
     "propagate": "tsx scripts/propagate-address.ts",
     "bootstrap": "pnpm run compile && pnpm run deploy && pnpm run propagate",
-    "test": "hardhat test"
+    "test": "hardhat test",
+    "test:fork": "hardhat test test/fork/mezo.fork.test.ts",
+    "verify": "tsx scripts/verify.ts",
+    "smoke:trove": "hardhat run scripts/smoke-trove.ts --network matsnet"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-network-helpers": "^1.0.12",
