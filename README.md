@@ -12,16 +12,66 @@ them unilaterally, and no settlement is reversible once final.
 Funding works two ways:
 
 - **MUSD** — the buyer deposits the stablecoin directly.
-- **BTC collateral** — the buyer locks native BTC; TrustieWork mints MUSD against it through
-  Mezo's trove system (`BorrowerOperations.openTrove`). The Bitcoin keeps working as collateral
-  while it secures the job.
+- **BTC collateral** — each employer gets their **own Mezo trove**, held by a personal
+  `TroveVault` contract. The first BTC job opens it (`BorrowerOperations.openTrove`), later jobs
+  pool into it (`adjustTrove`), and the employer can repay, top up, withdraw, close the trove and
+  claim surplus collateral to get their BTC back. Prices and trove health come live from Mezo's
+  `PriceFeed` and `TroveManager`.
 
 ## How this hits each track
 
 - **Bank on Bitcoin — Bitcoin Track:** escrow is a core financial primitive. TrustieWork lets
   a buyer's BTC keep working as trove collateral while it secures real freelance work.
-- **MEZO Utilization — MEZO Track:** MUSD is the settlement currency end-to-end, with direct
-  integration into Mezo's `BorrowerOperations` trove system for BTC-collateralized funding.
+- **MEZO Utilization — MEZO Track:** MUSD is the settlement currency end-to-end, with a full
+  trove lifecycle per employer on Mezo's MUSD protocol: `openTrove`, `adjustTrove`, `addColl`,
+  `withdrawColl`, `repayMUSD`, `closeTrove` and `claimCollateral` on `BorrowerOperations`, plus
+  live reads from `TroveManager` (status, collateral, debt, ICR), `PriceFeed` (BTC/USD) and
+  `CollSurplusPool` (claimable collateral). See [Mezo integration](#mezo-integration-v2).
+
+## Mezo integration (v2)
+
+| | v1 (Hackathon 2) | v2 (this wave) |
+|---|---|---|
+| Trove owner | the escrow contract — one trove total, so only the first BTC job could ever succeed | one `TroveVault` per employer, so every employer has their own trove |
+| More BTC jobs | reverted (`Trove is active`) | pooled into the employer's trove with `adjustTrove` (BTC optional) |
+| Getting BTC back | impossible | `repay`, `withdrawCollateral`, `closeTrove`, `claimCollateral` via the vault; BTC is sent straight to the employer |
+| BTC price | hard-coded $95,000 | Mezo `PriceFeed`, on-chain (`getTrove`) and in the UI |
+| Trove health | client-side guess | `TroveManager.getTroveStatus / getTroveColl / getTroveDebt / getCurrentICR` |
+| Minimum debt / fee | env defaults | `BorrowerOperations.minNetDebt()` / `getBorrowingFee()` |
+
+How it fits together:
+
+- `SatLockEscrow.postJobWithBTC(musd, deadline, uri, upperHint, lowerHint)` creates the caller's
+  `TroveVault` on first use (CREATE2, salted by employer). If the vault's trove is not active it
+  calls `openTroveFor` (opens with the BTC sent); otherwise `borrowMoreFor` (`adjustTrove` adding
+  any BTC sent and minting more MUSD). The minted MUSD moves into the escrow for the job at once.
+- The vault is managed by the employer only (`onlyEmployer`); only the escrow can borrow through
+  it (`onlyEscrow`). Job funds never depend on the trove after minting.
+- `SatLockEscrow.getTrove(employer)` returns `{vault, status, coll, debt, price, icr}` from
+  TroveManager + PriceFeed; it tolerates a stale oracle (`price = 0`) instead of reverting.
+- Closing burns `debt − 200 MUSD` (Mezo burns the gas compensation from its gas pool); the vault
+  pulls a small buffer for interest accrued until the tx and refunds the unused MUSD.
+- The buyer dashboard has a **Your Mezo trove** panel for all of the above; the post-job form
+  previews the resulting trove (opens vs. pools, ratio, liquidation price) with live parameters.
+
+Verification:
+
+- `contracts`: `pnpm test` — 27 tests, including a faithful MUSD mock (one trove per address,
+  1800 MUSD minimum, 200 MUSD gas compensation, 0.1% fee, 110% MCR, close/claim semantics).
+- `contracts`: `pnpm test:fork` — runs the vault flow against **Mezo's live contracts** on a
+  Matsnet fork (open → pool via adjustTrove → read TroveManager/PriceFeed → close → BTC back).
+  Mezo's oracle is a precompile a fork cannot execute, so the test installs a Chainlink-style
+  aggregator there carrying the live Matsnet answer; every other call hits Mezo's real code.
+- `contracts`: `pnpm smoke:trove` — the same flow on Matsnet itself (needs ~0.05 BTC).
+
+## Project history
+
+TrustieWork was first built for **Mezo Hackathon 2** (escrow contract, MUSD + single-trove BTC
+funding, Gemini review, dispute/appeal ladder). This Wave builds on that entry. Work done in the
+Oct 16–26 window: UI overhaul, AI per-requirement evidence, indexer and timeline. Work done for
+Wave 2: per-employer troves with pooling, the full repay/close/claim lifecycle, live
+TroveManager/PriceFeed reads, the redeployed and explorer-verified escrow, party-only AI
+endpoints, and on-chain-sourced submission URLs.
 
 ## Architecture
 
@@ -162,7 +212,8 @@ pnpm run dev:all                 # API + event indexer in one terminal (recommen
 | `AI_AUTO_RESOLVE_MIN_CONFIDENCE` | `0.65` | Verdicts under this confidence are recorded but not sent on-chain — escalated to admin |
 | `RATE_LIMIT_AI_PER_MIN` | `20` | Per-IP cap on `/ai/*` (Gemini-cost protection) |
 | `GITHUB_TOKEN` | unset | Optional — raises the public GitHub rate limit when digesting repo URLs |
-| `INDEXER_START_BLOCK` | `0` | Block the event indexer starts at on a fresh database |
+| `INDEXER_START_BLOCK` | `0` | Block the event indexer starts at on a fresh database (set to the escrow's deploy block by `pnpm run propagate`) |
+| `FIRESTORE_NAMESPACE` | `''` | Prefix for per-deployment collections (`jobs`, `aiVerdicts`, `appeals`, indexer cursor); `propagate` sets `v2_` |
 | `LOG_LEVEL` | `debug` (dev) / `info` (prod) | Pino log level |
 
 ### Firebase credentials — three accepted formats
@@ -204,18 +255,13 @@ the user picks a role (buyer or developer), links a **Mezo wallet**, and signs a
 challenge proving they control that wallet's private key. The signature is verified by the
 backend before the profile is saved — wallets cannot be spoofed.
 
-### Trove preview env vars (BTC-mode posts)
+### Trove preview (BTC-mode posts)
 
-The new-job form shows a live trove-health preview (collateral ratio, max safe borrow,
-liquidation warnings) before the buyer signs. Defaults are conservative; override if Mezo's
-parameters change:
-
-| env var | default | purpose |
-|---|---|---|
-| `NEXT_PUBLIC_TROVE_MIN_CR` | `1.10` | Protocol minimum collateral ratio |
-| `NEXT_PUBLIC_TROVE_SAFE_CR` | `1.50` | Recommended safety buffer |
-| `NEXT_PUBLIC_TROVE_MIN_DEBT_MUSD` | `1800` | Protocol minimum net debt |
-| `NEXT_PUBLIC_BTC_PRICE_USD` | `95000` | Default BTC price for the preview (form lets buyer override per-post) |
+The new-job form previews the employer's trove *after* this job — whether the job opens the
+trove or pools into it, collateral, debt (incl. the borrowing fee and 200 MUSD gas
+compensation), collateral ratio and liquidation price. Everything is read live: BTC/USD from
+Mezo's `PriceFeed`, the employer's trove from `TroveManager` (both via the escrow's `getTrove`),
+and `minNetDebt` / the borrowing fee from `BorrowerOperations`. No price is configured.
 
 ### Failure recovery
 
@@ -277,10 +323,14 @@ manual UI buttons.
 | Explorer | https://explorer.test.mezo.org |
 | MUSD token | `0x118917a40FAF1CD7a13dB0Ef56C86De7973Ac503` |
 | BorrowerOperations | `0xCdF7028ceAB81fA0C6971208e83fa7872994beE5` |
+| TroveManager | `0xE47c80e8c23f6B4A1aE41c34837a0599D5D16bb0` |
+| PriceFeed | `0x86bCF0841622a5dAC14A313a15f96A95421b9366` |
+| CollSurplusPool | `0xB4C35747c26E4aB5F1a7CdC7E875B5946eFa6fa9` |
+| **SatLockEscrow v2 (verified)** | [`0xf0163fab9e58f901afc994fca363255a536f5823`](https://explorer.test.mezo.org/address/0xf0163fab9e58f901afc994fca363255a536f5823#code) — deploy block 16598747 |
 | Faucet | https://faucet.test.mezo.org |
 
-> Verify the MUSD / BorrowerOperations addresses against the latest Mezo docs before a real
-> deploy — testnet addresses can change.
+> Mezo addresses come from `mezo-org/musd` (`solidity/artifacts/deployments/matsnet`). The full
+> deployment record, including constructor args, is in `contracts/deployments/matsnet.json`.
 
 ### Useful scripts
 
@@ -291,6 +341,9 @@ manual UI buttons.
 | `contracts` | `pnpm run deploy` | Deploy `SatLockEscrow` to Matsnet |
 | `contracts` | `pnpm run propagate` | Patch deployed address into backend + frontend env files |
 | `contracts` | `pnpm run bootstrap` | compile + deploy + propagate in one shot |
+| `contracts` | `pnpm test:fork` | Vault flow against Mezo's live contracts on a Matsnet fork |
+| `contracts` | `pnpm run verify` | Verify the escrow on Mezo's Blockscout explorer |
+| `contracts` | `pnpm smoke:trove` | Live Matsnet trove flow (open, pool, read, cancel, repay) |
 | `backend` | `pnpm dev` | API server (watch mode) |
 | `backend` | `pnpm run dev:indexer` | Event indexer (watch mode) |
 | `backend` | `pnpm run dev:all` | Both, via `concurrently` |
@@ -303,14 +356,12 @@ manual UI buttons.
 
 ### Known limitations (v1)
 
-- **BTC mode is one-shot per contract deployment.** Mezo's MUSD is a Liquity-style CDP — one
-  trove per owner address — so the escrow contract can only have one active trove at any
-  time. After the first BTC-mode post, subsequent BTC-mode posts revert with
-  `BorrowerOps: Trove is active.` Use MUSD mode for additional jobs, or fix in v1.1 by
-  switching the contract to `adjustTrove()` so all BTC jobs share one pooled trove.
-- **BTC collateral is not retrievable in v1.** Reclaiming BTC by repaying the trove debt is
-  out of scope for v1: the trove is opened and owned by the escrow contract, and `cancelOpenJob`
-  refunds the MUSD only. For BTC-mode jobs, plan to see them through to a developer payout.
+- **Sorted-list hints are zero.** `postJobWithBTC` and the vault accept SortedTroves hints, but
+  the UI passes `address(0)`, which Mezo accepts at a higher gas cost. Computing hints with
+  `HintHelpers.getApproxHint` is a straightforward follow-up.
+- **Redeploying restarts job ids.** Each escrow deployment gets its own Firestore namespace
+  (`FIRESTORE_NAMESPACE`, set by `pnpm run propagate`); v1 records stay readable under the
+  original collections.
 - **The WalletConnect placeholder project ID** prints a harmless 400 in the browser console
   (analytics ping). Set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` from
   https://cloud.reown.com to silence it. Injected wallets (MetaMask, Rabby) work without it.
