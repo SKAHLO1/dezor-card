@@ -1,5 +1,5 @@
 import { escrowAbi, escrowAddress, publicClient } from './chain';
-import { getDb, firebaseEnabled } from './firebase';
+import { getDb, firebaseEnabled, ns } from './firebase';
 import { reviewSubmission, arbitrateDispute, hasVerdict } from './services/ai';
 import { env } from './env';
 
@@ -18,7 +18,7 @@ const REORG_REWIND = 50n;
 /** Max blocks per eth_getLogs call (inclusive span); the Mezo RPC caps it at 10,000. */
 const MAX_LOG_RANGE = 9_000n;
 const POLL_INTERVAL_MS = 10_000;
-const META_DOC = 'meta/indexer';
+const META_DOC = `${ns('meta')}/indexer`;
 
 type LogLike = {
   blockNumber: bigint;
@@ -61,7 +61,7 @@ async function projectJobToFirestore(jobId: string) {
       args: [BigInt(jobId)],
     });
     await getDb()
-      .collection('jobs')
+      .collection(ns('jobs'))
       .doc(jobId)
       .set(
         {
@@ -91,7 +91,7 @@ async function projectJobToFirestore(jobId: string) {
 async function getSubmissionUrl(jobId: string): Promise<string | null> {
   if (!firebaseEnabled) return null;
   try {
-    const snap = await getDb().collection('jobs').doc(jobId).get();
+    const snap = await getDb().collection(ns('jobs')).doc(jobId).get();
     const url = snap.data()?.submissionUrl as string | undefined;
     return url ?? null;
   } catch {
@@ -117,7 +117,7 @@ async function recordEvent(jobId: string, log: LogLike) {
   try {
     const by = (log.args.by ?? log.args.freelancer ?? log.args.employer) as string | undefined;
     await getDb()
-      .collection('jobs')
+      .collection(ns('jobs'))
       .doc(jobId)
       .collection('events')
       .doc(`${log.transactionHash}-${log.logIndex ?? 0}`)

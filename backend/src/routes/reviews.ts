@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { requireAuth, getDb, firebaseEnabled, ns } from '../firebase';
 import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
 
 export const reviewsRouter = Router();
@@ -42,9 +42,10 @@ reviewsRouter.post('/reviews', requireAuth, async (req, res) => {
 
     const db = getDb();
     // One review per (jobId, employer) — re-submitting overwrites the prior text.
-    const reviewId = `${String(jobId)}_${req.walletAddress}`;
+    const reviewId = `${ns('jobs')}_${String(jobId)}_${req.walletAddress}`;
     await db.collection('reviews').doc(reviewId).set({
       jobId: String(jobId),
+      escrow: escrowAddress.toLowerCase(),
       fromUid: req.uid,
       fromWallet: req.walletAddress ?? null,
       toWallet: wallet,

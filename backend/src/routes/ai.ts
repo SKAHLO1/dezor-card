@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { requireAuth, getDb, firebaseEnabled, ns } from '../firebase';
 import { reviewSubmission, arbitrateDispute } from '../services/ai';
 
 export const aiRouter = Router();
@@ -12,7 +12,7 @@ aiRouter.get('/ai/verdicts/:jobId', async (req, res) => {
   if (!firebaseEnabled) return res.json({ verdicts: [] });
   try {
     const snap = await getDb()
-      .collection('aiVerdicts')
+      .collection(ns('aiVerdicts'))
       .where('jobId', '==', req.params.jobId)
       .get();
     const verdicts = snap.docs

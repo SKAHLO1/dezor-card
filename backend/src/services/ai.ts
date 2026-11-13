@@ -1,7 +1,7 @@
 import { escrowAbi, escrowAddress, publicClient, arbiterWallet, Status } from '../chain';
 import { getVerdict, type Verdict } from '../arbiter';
 import { buildSubmissionDigest, type DigestQuality, type RepoInfo } from '../github';
-import { getDb, firebaseEnabled } from '../firebase';
+import { getDb, firebaseEnabled, ns } from '../firebase';
 import { env } from '../env';
 
 /**
@@ -39,7 +39,7 @@ async function recordVerdict(
   if (!firebaseEnabled) return;
   try {
     await getDb()
-      .collection('aiVerdicts')
+      .collection(ns('aiVerdicts'))
       .add({ jobId, layer, ...data, createdAt: Date.now() });
   } catch (err) {
     console.error('Failed to record AI verdict:', err);
@@ -57,7 +57,7 @@ async function resolveJobSpec(jobId: string, detailsURI: string): Promise<string
     return `Job specification pointer: ${detailsURI}\n(No off-chain spec store configured — the AI has no description of the work to compare against.)`;
   }
   try {
-    const snap = await getDb().collection('jobs').doc(jobId).get();
+    const snap = await getDb().collection(ns('jobs')).doc(jobId).get();
     if (!snap.exists) {
       return `Job specification pointer: ${detailsURI}\n(No off-chain record found for this job id — the buyer never saved a description.)`;
     }
@@ -135,7 +135,7 @@ export async function arbitrateDispute(
     if (firebaseEnabled) {
       try {
         await getDb()
-          .collection('appeals')
+          .collection(ns('appeals'))
           .doc(jobId)
           .set(
             {
@@ -175,6 +175,6 @@ export async function hasVerdict(
   layer: 'submission' | 'dispute',
 ): Promise<boolean> {
   if (!firebaseEnabled) return false;
-  const snap = await getDb().collection('aiVerdicts').where('jobId', '==', jobId).get();
+  const snap = await getDb().collection(ns('aiVerdicts')).where('jobId', '==', jobId).get();
   return snap.docs.some((d) => d.data().layer === layer);
 }

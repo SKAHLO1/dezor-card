@@ -23,6 +23,12 @@ export const env = {
     // Block to start indexing from. 0 = scan from contract deploy / chain start.
     indexerStartBlock: BigInt(process.env.INDEXER_START_BLOCK ?? '0'),
   },
+  firestore: {
+    // Prefix for contract-scoped collections (jobs, aiVerdicts, appeals, indexer cursor).
+    // A redeployed escrow restarts job ids at 0, so each deployment gets its own namespace
+    // and old deployments' records stay intact. Users and reviews stay global.
+    namespace: process.env.FIRESTORE_NAMESPACE ?? '',
+  },
   arbiter: {
     // Backend wallet allowed to call resolveDispute() — must match the contract's aiArbiter.
     privateKey: required('ARBITER_PRIVATE_KEY') as `0x${string}`,

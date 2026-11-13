@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, requireAdmin, getDb, firebaseEnabled } from '../firebase';
+import { requireAuth, requireAdmin, getDb, firebaseEnabled, ns } from '../firebase';
 import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
 
 export const appealsRouter = Router();
@@ -57,7 +57,7 @@ appealsRouter.post('/appeals', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'jobId and reason are required' });
   }
   try {
-    const ref = getDb().collection('appeals').doc(String(jobId));
+    const ref = getDb().collection(ns('appeals')).doc(String(jobId));
     await ref.set(
       {
         jobId: String(jobId),
@@ -106,13 +106,13 @@ appealsRouter.get('/admin/disputes', requireAuth, requireAdmin, async (_req, res
 
         const [meta, verdictsSnap, appealSnap] = await Promise.all([
           firebaseEnabled
-            ? getDb().collection('jobs').doc(id).get().then((s) => (s.exists ? s.data() : null))
+            ? getDb().collection(ns('jobs')).doc(id).get().then((s) => (s.exists ? s.data() : null))
             : Promise.resolve(null),
           firebaseEnabled
-            ? getDb().collection('aiVerdicts').where('jobId', '==', id).get()
+            ? getDb().collection(ns('aiVerdicts')).where('jobId', '==', id).get()
             : Promise.resolve(null),
           firebaseEnabled
-            ? getDb().collection('appeals').doc(id).get().then((s) => (s.exists ? s.data() : null))
+            ? getDb().collection(ns('appeals')).doc(id).get().then((s) => (s.exists ? s.data() : null))
             : Promise.resolve(null),
         ]);
 
@@ -146,7 +146,7 @@ appealsRouter.get('/admin/disputes', requireAuth, requireAdmin, async (_req, res
 appealsRouter.get('/appeals', requireAuth, requireAdmin, async (_req, res) => {
   if (!firebaseEnabled) return res.json({ appeals: [] });
   try {
-    const snap = await getDb().collection('appeals').where('status', '==', 'open').get();
+    const snap = await getDb().collection(ns('appeals')).where('status', '==', 'open').get();
     const appeals = snap.docs
       .map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
       .sort(
@@ -169,7 +169,7 @@ appealsRouter.post('/admin/resolve/:jobId', requireAuth, requireAdmin, async (re
   const { approve, note, txHash } = req.body ?? {};
   try {
     await getDb()
-      .collection('appeals')
+      .collection(ns('appeals'))
       .doc(req.params.jobId)
       .set(
         {

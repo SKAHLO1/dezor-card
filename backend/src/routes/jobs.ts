@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAuth, getDb, firebaseEnabled } from '../firebase';
+import { requireAuth, getDb, firebaseEnabled, ns } from '../firebase';
 import { escrowAbi, escrowAddress, publicClient, Status } from '../chain';
 
 export const jobsRouter = Router();
@@ -51,7 +51,7 @@ jobsRouter.post('/jobs/sync', requireAuth, async (req, res) => {
       return res.status(403).json({ error: 'connected wallet is not the on-chain employer' });
     }
 
-    const ref = getDb().collection('jobs').doc(id);
+    const ref = getDb().collection(ns('jobs')).doc(id);
     const existing = await ref.get();
     const base = existing.exists ? {} : { createdAt: Date.now(), employerUid: req.uid };
     await ref.set(
@@ -90,7 +90,7 @@ jobsRouter.post('/jobs/:id/submission', requireAuth, async (req, res) => {
   const submissionUrl = String(req.body?.submissionUrl ?? '').trim();
   if (!submissionUrl) return res.status(400).json({ error: 'submissionUrl is required' });
   try {
-    const ref = getDb().collection('jobs').doc(req.params.id);
+    const ref = getDb().collection(ns('jobs')).doc(req.params.id);
     const snap = await ref.get();
     const onchainFreelancer = (snap.data()?.onchain?.freelancer as string | undefined)?.toLowerCase();
     if (onchainFreelancer && onchainFreelancer !== req.walletAddress) {
@@ -115,7 +115,7 @@ jobsRouter.post('/jobs/:id/submission', requireAuth, async (req, res) => {
 jobsRouter.get('/jobs', async (_req, res) => {
   if (!firebaseEnabled) return res.json({ jobs: [] });
   try {
-    const snap = await getDb().collection('jobs').orderBy('createdAt', 'desc').limit(200).get();
+    const snap = await getDb().collection(ns('jobs')).orderBy('createdAt', 'desc').limit(200).get();
     return res.json({ jobs: snap.docs.map((d) => ({ id: d.id, ...d.data() })) });
   } catch (err) {
     return res.status(500).json({ error: (err as Error).message });
@@ -129,7 +129,7 @@ jobsRouter.get('/jobs', async (_req, res) => {
 jobsRouter.get('/jobs/:id/events', async (req, res) => {
   if (!firebaseEnabled) return res.json({ events: [] });
   try {
-    const snap = await getDb().collection('jobs').doc(req.params.id).collection('events').get();
+    const snap = await getDb().collection(ns('jobs')).doc(req.params.id).collection('events').get();
     const events = snap.docs
       .map((d) => d.data() as { blockNumber: number; logIndex?: number })
       .sort((a, b) => a.blockNumber - b.blockNumber || (a.logIndex ?? 0) - (b.logIndex ?? 0));
@@ -143,7 +143,7 @@ jobsRouter.get('/jobs/:id/events', async (req, res) => {
 jobsRouter.get('/jobs/:id', async (req, res) => {
   if (!firebaseEnabled) return notConfigured(res);
   try {
-    const doc = await getDb().collection('jobs').doc(req.params.id).get();
+    const doc = await getDb().collection(ns('jobs')).doc(req.params.id).get();
     if (!doc.exists) return res.status(404).json({ error: 'job not found' });
     return res.json({ id: doc.id, ...doc.data() });
   } catch (err) {

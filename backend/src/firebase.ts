@@ -62,6 +62,9 @@ if (creds) {
 
 export const firebaseEnabled = !!firestore;
 
+/** Collection name scoped to the current escrow deployment (see env.firestore.namespace). */
+export const ns = (name: 'jobs' | 'aiVerdicts' | 'appeals' | 'meta') => `${env.firestore.namespace}${name}`;
+
 /** Firestore handle — throws a clear error if Firebase is not configured. */
 export function getDb(): Firestore {
   if (!firestore) {
