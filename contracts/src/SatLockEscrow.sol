@@ -1,21 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-interface IERC20 {
-    function transfer(address to, uint256 amount) external returns (bool);
-    function transferFrom(address from, address to, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-}
-
-/// @notice Minimal interface to Mezo's MUSD BorrowerOperations (Liquity-style trove system).
-interface IBorrowerOperations {
-    function openTrove(uint256 _debtAmount, address _upperHint, address _lowerHint) external payable;
-}
+import {IERC20, IBorrowerOperations, ITroveManager, IPriceFeed} from "./interfaces/IMezo.sol";
+import {TroveVault} from "./TroveVault.sol";
 
 /// @title SatLockEscrow
 /// @notice Bitcoin-native developer-services marketplace on Mezo. Buyers post and fund jobs
 ///         to an open marketplace — either directly in MUSD, or by locking native BTC as
-///         collateral and minting MUSD against it via Mezo's trove system. Any developer can
+///         collateral and minting MUSD against it via Mezo's trove system. Each employer gets
+///         their own TroveVault (Mezo allows one trove per address): the first BTC job opens the
+///         trove, later jobs pool into it with adjustTrove, and the employer can repay, close and
+///         claim collateral to get their BTC back. Any developer can
 ///         claim an open job and submit work. The happy path lets the buyer accept and leave
 ///         an on-chain rating. Disputes are handled AI-first (the off-chain Gemini arbiter
 ///         calls `resolveDispute`), with an appeal window that escalates to the admin owner.
@@ -49,19 +44,44 @@ contract SatLockEscrow {
         bool aiVerdictApprove;  // pending AI verdict awaiting finalization (DisputeResolved)
         uint8 rating;           // 1-5 buyer rating of the developer (0 until released w/ review)
         string detailsURI;      // off-chain job spec (Firestore/IPFS/HTTPS)
+        uint64 submittedBlock;  // block of the WorkSubmitted event (0 until submitted)
+    }
+
+    /// @notice Live view of an employer's trove, read from Mezo's TroveManager and PriceFeed.
+    struct TroveView {
+        address vault;          // employer's TroveVault (zero until their first BTC job)
+        uint8 status;           // TroveManager.Status: 0 none, 1 active, 2 closed, 3 liquidated, 4 redeemed
+        uint256 coll;           // BTC collateral in the trove
+        uint256 debt;           // total MUSD debt (principal + fees + interest + 200 gas compensation)
+        uint256 price;          // BTC/USD from PriceFeed, 18 decimals
+        uint256 icr;            // individual collateral ratio, 18 decimals (1e18 = 100%)
     }
 
     uint64 public constant APPEAL_WINDOW = 3 days;
+    uint8 internal constant TROVE_ACTIVE = 1; // TroveManager.Status.active
 
     IERC20 public immutable musd;
     IBorrowerOperations public immutable borrowerOps;
+    ITroveManager public immutable troveManager;
+    IPriceFeed public immutable priceFeed;
     address public owner;       // admin — final appeal authority
     address public aiArbiter;   // backend wallet — records AI dispute verdicts
     uint256 public nextJobId;
 
     mapping(uint256 => Job) public jobs;
+    /// @notice Each employer's TroveVault (owner of their Mezo trove).
+    mapping(address => address) public vaultOf;
 
     event JobPosted(uint256 indexed id, address indexed employer, uint256 amount, FundingMode mode, uint64 deadline);
+    event VaultCreated(address indexed employer, address vault);
+    event TroveFunded(
+        uint256 indexed id,
+        address indexed employer,
+        address vault,
+        uint256 btcAdded,
+        uint256 musdBorrowed,
+        bool openedTrove
+    );
     event JobClaimed(uint256 indexed id, address indexed freelancer);
     event JobUnclaimed(uint256 indexed id, address indexed freelancer);
     event WorkSubmitted(uint256 indexed id, string submissionURI);
@@ -86,10 +106,25 @@ contract SatLockEscrow {
         _;
     }
 
-    constructor(address _musd, address _borrowerOps, address _aiArbiter) {
-        require(_musd != address(0) && _aiArbiter != address(0), "zero addr");
+    constructor(
+        address _musd,
+        address _borrowerOps,
+        address _troveManager,
+        address _priceFeed,
+        address _aiArbiter
+    ) {
+        require(
+            _musd != address(0) &&
+                _borrowerOps != address(0) &&
+                _troveManager != address(0) &&
+                _priceFeed != address(0) &&
+                _aiArbiter != address(0),
+            "zero addr"
+        );
         musd = IERC20(_musd);
         borrowerOps = IBorrowerOperations(_borrowerOps);
+        troveManager = ITroveManager(_troveManager);
+        priceFeed = IPriceFeed(_priceFeed);
         aiArbiter = _aiArbiter;
         owner = msg.sender;
     }
@@ -120,23 +155,35 @@ contract SatLockEscrow {
         emit JobPosted(id, msg.sender, amount, FundingMode.MUSD, deadline);
     }
 
-    /// @notice Post a job by locking native BTC as collateral and minting MUSD against it.
-    ///         The trove is owned by this contract; the buyer's BTC keeps working in Mezo's
-    ///         system. Reclaiming the collateral by repaying the trove is out of scope v1.
-    /// @param musdToBorrow MUSD debt to mint — must clear the protocol minimum net debt.
+    /// @notice Post a job funded by the employer's own Mezo trove. On the first BTC job the
+    ///         employer's TroveVault is created and opens a trove with the BTC sent; later jobs
+    ///         pool into the same trove via adjustTrove (adding any BTC sent and borrowing more).
+    ///         The minted MUSD is escrowed for the job; the trove stays the employer's to repay,
+    ///         close or top up through their vault.
+    /// @param musdToBorrow MUSD to mint for this job (the borrowing fee is added to trove debt).
+    /// @param upperHint    SortedTroves insert hint (address(0) is valid, just costs more gas).
+    /// @param lowerHint    SortedTroves insert hint.
     function postJobWithBTC(
         uint256 musdToBorrow,
         uint64 deadline,
-        string calldata detailsURI
+        string calldata detailsURI,
+        address upperHint,
+        address lowerHint
     ) external payable returns (uint256 id) {
-        require(msg.value > 0, "no BTC sent");
         require(musdToBorrow > 0, "zero debt");
         require(deadline > block.timestamp, "bad deadline");
 
+        TroveVault vault = _vaultFor(msg.sender);
+        bool open = troveManager.getTroveStatus(address(vault)) != TROVE_ACTIVE;
+
         uint256 balBefore = musd.balanceOf(address(this));
-        borrowerOps.openTrove{value: msg.value}(musdToBorrow, address(0), address(0));
-        uint256 minted = musd.balanceOf(address(this)) - balBefore;
-        require(minted >= musdToBorrow, "mint shortfall");
+        if (open) {
+            require(msg.value > 0, "no BTC sent");
+            vault.openTroveFor{value: msg.value}(musdToBorrow, upperHint, lowerHint);
+        } else {
+            vault.borrowMoreFor{value: msg.value}(musdToBorrow, upperHint, lowerHint);
+        }
+        require(musd.balanceOf(address(this)) - balBefore >= musdToBorrow, "mint shortfall");
 
         id = nextJobId++;
         Job storage j = jobs[id];
@@ -148,6 +195,7 @@ contract SatLockEscrow {
         j.deadline = deadline;
         j.detailsURI = detailsURI;
 
+        emit TroveFunded(id, msg.sender, address(vault), msg.value, musdToBorrow, open);
         emit JobPosted(id, msg.sender, musdToBorrow, FundingMode.BTC, deadline);
     }
 
@@ -184,6 +232,7 @@ contract SatLockEscrow {
         require(msg.sender == j.freelancer, "not freelancer");
         require(j.status == Status.Claimed, "not claimed");
         j.status = Status.Submitted;
+        j.submittedBlock = uint64(block.number);
         emit WorkSubmitted(id, submissionURI);
     }
 
@@ -321,6 +370,33 @@ contract SatLockEscrow {
 
     function getJob(uint256 id) external view returns (Job memory) {
         return jobs[id];
+    }
+
+    /// @notice Live state of an employer's trove from TroveManager, priced by PriceFeed.
+    ///         PriceFeed reverts when its oracle is more than 60s stale; that is reported as
+    ///         price = 0 / icr = 0 so the trove itself can still be read.
+    function getTrove(address employer) external view returns (TroveView memory t) {
+        t.vault = vaultOf[employer];
+        try priceFeed.fetchPrice() returns (uint256 p) {
+            t.price = p;
+        } catch {}
+        if (t.vault == address(0)) return t;
+        t.status = troveManager.getTroveStatus(t.vault);
+        t.coll = troveManager.getTroveColl(t.vault);
+        t.debt = troveManager.getTroveDebt(t.vault);
+        if (t.status == TROVE_ACTIVE && t.price > 0) t.icr = troveManager.getCurrentICR(t.vault, t.price);
+    }
+
+    function _vaultFor(address employer) internal returns (TroveVault vault) {
+        address existing = vaultOf[employer];
+        if (existing != address(0)) return TroveVault(payable(existing));
+        vault = new TroveVault{salt: bytes32(uint256(uint160(employer)))}(
+            employer,
+            address(borrowerOps),
+            address(musd)
+        );
+        vaultOf[employer] = address(vault);
+        emit VaultCreated(employer, address(vault));
     }
 
     /// @notice Total number of jobs ever posted — also the next id to be assigned.

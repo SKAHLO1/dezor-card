@@ -20,6 +20,14 @@ contract MockMUSD {
         emit Transfer(address(0), to, amount);
     }
 
+    /// @dev Mezo's MUSD lets BorrowerOperations burn from a trove owner on repay/close.
+    function burn(address from, uint256 amount) external {
+        require(balanceOf[from] >= amount, "balance");
+        balanceOf[from] -= amount;
+        totalSupply -= amount;
+        emit Transfer(from, address(0), amount);
+    }
+
     function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         emit Approval(msg.sender, spender, amount);

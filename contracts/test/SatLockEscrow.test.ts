@@ -24,8 +24,11 @@ async function deployFixture() {
 
   const musd = await hre.viem.deployContract("MockMUSD");
   const borrowerOps = await hre.viem.deployContract("MockBorrowerOperations", [musd.address]);
+  // The mock implements BorrowerOperations, TroveManager and PriceFeed in one contract.
   const escrow = await hre.viem.deployContract("SatLockEscrow", [
     musd.address,
+    borrowerOps.address,
+    borrowerOps.address,
     borrowerOps.address,
     arbiter.account.address,
   ]);
@@ -60,7 +63,197 @@ function as(escrowAddress: `0x${string}`, wallet: any) {
   return hre.viem.getContractAt("SatLockEscrow", escrowAddress, { client: { wallet } });
 }
 
+const ZERO = "0x0000000000000000000000000000000000000000" as const;
+const TroveStatus = { none: 0, active: 1, closedByOwner: 2, closedByLiquidation: 3 } as const;
+
+/** Post a BTC-funded job from `wallet`, sending `btc` as collateral, and return its id. */
+async function postBtcJob(
+  ctx: Awaited<ReturnType<typeof deployFixture>>,
+  wallet: any,
+  musdToBorrow: bigint,
+  btc: bigint,
+) {
+  const deadline = BigInt((await time.latest()) + 14 * DAY);
+  await (await as(ctx.escrow.address, wallet)).write.postJobWithBTC(
+    [musdToBorrow, deadline, "ipfs://spec", ZERO, ZERO],
+    { value: btc },
+  );
+  return (await ctx.escrow.read.nextJobId()) - 1n;
+}
+
+async function vaultOf(ctx: Awaited<ReturnType<typeof deployFixture>>, wallet: any) {
+  const addr = await ctx.escrow.read.vaultOf([wallet.account.address]);
+  return hre.viem.getContractAt("TroveVault", addr, { client: { wallet } });
+}
+
 describe("SatLockEscrow", () => {
+  describe("employer troves (Mezo BorrowerOperations / TroveManager / PriceFeed)", () => {
+    it("first BTC job creates the employer's vault and opens its own trove", async () => {
+      const ctx = await loadFixture(deployFixture);
+      const id = await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+
+      const job = await ctx.escrow.read.getJob([id]);
+      expect(job.mode).to.equal(1);
+      expect(job.btcCollateral).to.equal(parseEther("0.1"));
+      expect(await ctx.musd.read.balanceOf([ctx.escrow.address])).to.equal(parseEther("2000"));
+
+      const vault = await ctx.escrow.read.vaultOf([ctx.employer.account.address]);
+      expect(vault).to.not.equal(ZERO);
+      // The trove belongs to the vault, not the escrow.
+      expect(await ctx.borrowerOps.read.getTroveStatus([vault])).to.equal(TroveStatus.active);
+      expect(await ctx.borrowerOps.read.getTroveStatus([ctx.escrow.address])).to.equal(TroveStatus.none);
+
+      const t = await ctx.escrow.read.getTrove([ctx.employer.account.address]);
+      expect(getAddress(t.vault)).to.equal(getAddress(vault));
+      expect(t.status).to.equal(TroveStatus.active);
+      expect(t.coll).to.equal(parseEther("0.1"));
+      // 2000 principal + 0.1% fee + 200 gas compensation
+      expect(t.debt).to.equal(parseEther("2202"));
+      expect(t.price).to.equal(parseEther("75000"));
+      expect(t.icr).to.equal((parseEther("0.1") * parseEther("75000")) / parseEther("2202"));
+    });
+
+    it("pools a second job into the same trove with adjustTrove", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+      const vaultBefore = await ctx.escrow.read.vaultOf([ctx.employer.account.address]);
+
+      // No new BTC: borrows against the existing collateral (0.1 BTC @ $75k = $7.5k).
+      const id2 = await postBtcJob(ctx, ctx.employer, parseEther("1000"), 0n);
+      expect(await ctx.escrow.read.vaultOf([ctx.employer.account.address])).to.equal(vaultBefore);
+
+      const t = await ctx.escrow.read.getTrove([ctx.employer.account.address]);
+      expect(t.coll).to.equal(parseEther("0.1"));
+      expect(t.debt).to.equal(parseEther("3203")); // 2202 + 1000 + 1 fee
+      expect((await ctx.escrow.read.getJob([id2])).amount).to.equal(parseEther("1000"));
+      expect(await ctx.musd.read.balanceOf([ctx.escrow.address])).to.equal(parseEther("3000"));
+    });
+
+    it("gives each employer a separate vault and trove", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+      await postBtcJob(ctx, ctx.other, parseEther("1800"), parseEther("0.05"));
+      const a = await ctx.escrow.read.vaultOf([ctx.employer.account.address]);
+      const b = await ctx.escrow.read.vaultOf([ctx.other.account.address]);
+      expect(a).to.not.equal(b);
+      expect(await ctx.borrowerOps.read.getTroveStatus([a])).to.equal(TroveStatus.active);
+      expect(await ctx.borrowerOps.read.getTroveStatus([b])).to.equal(TroveStatus.active);
+    });
+
+    it("rejects opening a trove without BTC", async () => {
+      const ctx = await loadFixture(deployFixture);
+      const deadline = BigInt((await time.latest()) + DAY);
+      await expect(
+        (await as(ctx.escrow.address, ctx.employer)).write.postJobWithBTC([
+          parseEther("2000"), deadline, "x", ZERO, ZERO,
+        ]),
+      ).to.be.rejectedWith("no BTC sent");
+    });
+
+    it("employer repays part of the debt through the vault", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2500"), parseEther("0.1"));
+      const vault = await vaultOf(ctx, ctx.employer);
+      await ctx.musd.write.approve([vault.address, parseEther("300")], { account: ctx.employer.account });
+      await vault.write.repay([parseEther("300"), ZERO, ZERO]);
+      const t = await ctx.escrow.read.getTrove([ctx.employer.account.address]);
+      expect(t.debt).to.equal(parseEther("2402.5")); // 2500 + 2.5 fee + 200 - 300
+    });
+
+    it("employer closes the trove and gets all BTC back, then can reopen", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+      const vault = await vaultOf(ctx, ctx.employer);
+
+      // debt 2202 -> owner burns 2002 (gas compensation is burned from the gas pool).
+      const ceiling = parseEther("2100");
+      await ctx.musd.write.approve([vault.address, ceiling], { account: ctx.employer.account });
+      const musdBefore = await ctx.musd.read.balanceOf([ctx.employer.account.address]);
+      const btcBefore = await ctx.publicClient.getBalance({ address: ctx.employer.account.address });
+
+      await vault.write.closeTrove([ceiling]);
+
+      expect(await ctx.borrowerOps.read.getTroveStatus([vault.address])).to.equal(TroveStatus.closedByOwner);
+      expect(musdBefore - (await ctx.musd.read.balanceOf([ctx.employer.account.address]))).to.equal(
+        parseEther("2002"),
+      );
+      const btcGain =
+        (await ctx.publicClient.getBalance({ address: ctx.employer.account.address })) - btcBefore;
+      expect(btcGain > parseEther("0.099")).to.equal(true); // 0.1 BTC back, minus gas
+      expect(await ctx.publicClient.getBalance({ address: vault.address })).to.equal(0n);
+
+      // A later BTC job reopens a fresh trove in the same vault.
+      await postBtcJob(ctx, ctx.employer, parseEther("1800"), parseEther("0.05"));
+      expect(await ctx.borrowerOps.read.getTroveStatus([vault.address])).to.equal(TroveStatus.active);
+    });
+
+    it("employer withdraws excess collateral", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.2"));
+      const vault = await vaultOf(ctx, ctx.employer);
+      await vault.write.withdrawCollateral([parseEther("0.05"), ZERO, ZERO]);
+      expect((await ctx.escrow.read.getTrove([ctx.employer.account.address])).coll).to.equal(
+        parseEther("0.15"),
+      );
+      expect(await ctx.publicClient.getBalance({ address: vault.address })).to.equal(0n);
+    });
+
+    it("employer claims surplus collateral after a liquidation", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+      const vault = await vaultOf(ctx, ctx.employer);
+      await ctx.borrowerOps.write.liquidateWithSurplus([vault.address, parseEther("0.03")]);
+
+      const before = await ctx.publicClient.getBalance({ address: ctx.employer.account.address });
+      await vault.write.claimCollateral();
+      const gain = (await ctx.publicClient.getBalance({ address: ctx.employer.account.address })) - before;
+      expect(gain > parseEther("0.029")).to.equal(true);
+      expect(await ctx.borrowerOps.read.surplus([vault.address])).to.equal(0n);
+    });
+
+    it("only the employer can manage the vault, only the escrow can borrow through it", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.1"));
+      const addr = await ctx.escrow.read.vaultOf([ctx.employer.account.address]);
+      const asOther = await hre.viem.getContractAt("TroveVault", addr, { client: { wallet: ctx.other } });
+      await expect(asOther.write.closeTrove([0n])).to.be.rejectedWith("not employer");
+      await expect(asOther.write.claimCollateral()).to.be.rejectedWith("not employer");
+      await expect(asOther.write.borrowMoreFor([parseEther("1"), ZERO, ZERO])).to.be.rejectedWith(
+        "not escrow",
+      );
+    });
+
+    it("reverts when the new debt would push the trove below MCR", async () => {
+      const ctx = await loadFixture(deployFixture);
+      await postBtcJob(ctx, ctx.employer, parseEther("2000"), parseEther("0.05"));
+      await ctx.borrowerOps.write.setPrice([parseEther("50000")]); // 0.05 BTC = $2.5k
+      const deadline = BigInt((await time.latest()) + DAY);
+      await expect(
+        (await as(ctx.escrow.address, ctx.employer)).write.postJobWithBTC([
+          parseEther("1000"), deadline, "x", ZERO, ZERO,
+        ]),
+      ).to.be.rejectedWith("ICR below MCR");
+    });
+  });
+
+  describe("submission record", () => {
+    it("stores the WorkSubmitted block so the URL can be read back from the event", async () => {
+      const ctx = await loadFixture(deployFixture);
+      const id = await postMusdJob(ctx);
+      await (await as(ctx.escrow.address, ctx.dev)).write.claimJob([id]);
+      await (await as(ctx.escrow.address, ctx.dev)).write.submitWork([id, "https://github.com/x/y"]);
+
+      const job = await ctx.escrow.read.getJob([id]);
+      expect(job.submittedBlock > 0n).to.equal(true);
+      const logs = await ctx.escrow.getEvents.WorkSubmitted(
+        { id },
+        { fromBlock: job.submittedBlock, toBlock: job.submittedBlock },
+      );
+      expect(logs).to.have.length(1);
+      expect(logs[0].args.submissionURI).to.equal("https://github.com/x/y");
+    });
+  });
+
   describe("posting", () => {
     it("posts a MUSD-funded job and locks the funds", async () => {
       const ctx = await loadFixture(deployFixture);
@@ -70,22 +263,6 @@ describe("SatLockEscrow", () => {
       expect(job.amount).to.equal(parseEther("1000"));
       expect(getAddress(job.employer)).to.equal(getAddress(ctx.employer.account.address));
       expect(await ctx.musd.read.balanceOf([ctx.escrow.address])).to.equal(parseEther("1000"));
-    });
-
-    it("posts a BTC-collateralized job by opening a trove", async () => {
-      const ctx = await loadFixture(deployFixture);
-      const deadline = BigInt((await time.latest()) + 14 * DAY);
-      const escrowAsEmployer = await as(ctx.escrow.address, ctx.employer);
-      await escrowAsEmployer.write.postJobWithBTC(
-        [parseEther("2000"), deadline, "ipfs://spec"],
-        { value: parseEther("0.1") },
-      );
-      const id = (await ctx.escrow.read.nextJobId()) - 1n;
-      const job = await ctx.escrow.read.getJob([id]);
-      expect(job.status).to.equal(Status.Open);
-      expect(job.mode).to.equal(1); // BTC
-      expect(job.btcCollateral).to.equal(parseEther("0.1"));
-      expect(await ctx.musd.read.balanceOf([ctx.escrow.address])).to.equal(parseEther("2000"));
     });
 
     it("rejects a deadline in the past", async () => {
