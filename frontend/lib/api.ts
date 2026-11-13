@@ -123,6 +123,9 @@ export interface AiVerdict {
   contentBytes?: number;
   digestNote?: string;
   escalated?: boolean;
+  /** Which AI produced the verdict. Absent on verdicts recorded before the Groq backup existed. */
+  provider?: 'gemini' | 'groq' | 'none';
+  model?: string;
   /** Per-requirement findings produced by the AI (absent on verdicts recorded before this existed). */
   checks?: RequirementCheck[];
   /** GitHub repository snapshot the AI reviewed, when the deliverable was a GitHub repo. */

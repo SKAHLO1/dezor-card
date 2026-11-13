@@ -540,7 +540,7 @@ function JobDetail({ id }: { id: string }) {
                     <Spinner />
                   ) : (
                     <span className="rounded-full border border-border-strong px-2.5 py-0.5 text-[11px] text-muted">
-                      Powered by Google Gemini
+                      {providerLabel(disputeVerdict ?? submissionReview)}
                     </span>
                   )
                 }
@@ -550,7 +550,7 @@ function JobDetail({ id }: { id: string }) {
               {disputeVerdict && <VerdictBlock label="Dispute arbitration" v={disputeVerdict} />}
               {submissionReview && <VerdictBlock label="Submission review" v={submissionReview} />}
               {!submissionReview && !disputeVerdict && aiBusy && (
-                <p className="text-sm text-muted">Gemini is scanning the deliverable…</p>
+                <p className="text-sm text-muted">The AI is scanning the deliverable…</p>
               )}
             </Card>
           )}
@@ -839,6 +839,13 @@ function JobDetail({ id }: { id: string }) {
   );
 }
 
+/** Which AI produced a verdict: Gemini by default, Groq when the backup handled it. */
+function providerLabel(v?: AiVerdict): string {
+  if (v?.provider === 'groq') return `Groq backup${v.model ? ` \u00b7 ${v.model}` : ''}`;
+  if (v?.provider === 'none') return 'No AI provider configured';
+  return `Google Gemini${v?.model ? ` \u00b7 ${v.model}` : ''}`;
+}
+
 const CHECK_STYLE = {
   met: { label: 'Verified', tone: 'success' as const },
   partial: { label: 'Partial', tone: 'warning' as const },
@@ -910,6 +917,7 @@ function VerdictBlock({ label, v }: { label: string; v: AiVerdict }) {
           </>
         )}
         {v.escalated && 'escalated to admin · '}
+        {v.provider && `by ${providerLabel(v)} · `}
         AI advice only — the buyer decides.
       </p>
 

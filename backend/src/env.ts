@@ -43,6 +43,13 @@ export const env = {
     modelDispute: process.env.GEMINI_MODEL_DISPUTE ?? process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
     timeoutMs: num('GEMINI_TIMEOUT_MS', 25_000),
   },
+  groq: {
+    // Backup reviewer, used when Gemini is not configured or fails. OpenAI-compatible API.
+    apiKey: process.env.GROQ_API_KEY ?? '',
+    model: process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
+    modelDispute: process.env.GROQ_MODEL_DISPUTE ?? process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile',
+    timeoutMs: num('GROQ_TIMEOUT_MS', 25_000),
+  },
   github: {
     token: process.env.GITHUB_TOKEN ?? '',
   },

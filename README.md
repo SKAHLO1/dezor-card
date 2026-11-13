@@ -198,7 +198,7 @@ pnpm run dev:all                 # API + event indexer in one terminal (recommen
 |---|---|
 | `ESCROW_ADDRESS` | deployed SatLockEscrow address (auto-populated by `pnpm run bootstrap`) |
 | `ARBITER_PRIVATE_KEY` | backend wallet — **must** match the contract's `aiArbiter` |
-| `GEMINI_API_KEY` | Google Gemini key — powers both AI layers |
+| `GEMINI_API_KEY` | Google Gemini key — primary model for both AI layers (`GROQ_API_KEY` below adds a backup) |
 | `FIREBASE_SERVICE_ACCOUNT_PATH` *or* `FIREBASE_SERVICE_ACCOUNT` | Admin SDK credentials (see "Firebase credentials" below) |
 | `ADMIN_ADDRESS` | the human admin's wallet (matches the contract `owner`; auto-populated) |
 
@@ -209,6 +209,10 @@ pnpm run dev:all                 # API + event indexer in one terminal (recommen
 | `GEMINI_MODEL` | `gemini-2.5-flash` | Submission-review model |
 | `GEMINI_MODEL_DISPUTE` | inherits `GEMINI_MODEL` | Override the model used for dispute arbitration only |
 | `GEMINI_TIMEOUT_MS` | `25000` | Hard timeout per Gemini call; one transient retry |
+| `GROQ_API_KEY` | unset | Backup AI. If Gemini is unset or fails (outage, quota, timeout, bad output), the same prompt goes to Groq. Get a key at https://console.groq.com/keys |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model for submission reviews (JSON mode) |
+| `GROQ_MODEL_DISPUTE` | inherits `GROQ_MODEL` | Groq model for dispute arbitration only |
+| `GROQ_TIMEOUT_MS` | `25000` | Hard timeout per Groq call; one transient retry |
 | `AI_AUTO_RESOLVE_MIN_CONFIDENCE` | `0.65` | Verdicts under this confidence are recorded but not sent on-chain — escalated to admin |
 | `RATE_LIMIT_AI_PER_MIN` | `20` | Per-IP cap on `/ai/*` (Gemini-cost protection) |
 | `GITHUB_TOKEN` | unset | Optional — raises the public GitHub rate limit when digesting repo URLs |
